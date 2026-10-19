@@ -12,6 +12,7 @@
     "run_worker_first": ["/api/*"],
     "html_handling": "auto-trailing-slash",
     "not_found_handling": "404-page"
-  }
-  // ioclookup.com is currently served by the domain-placeholder Worker; the route moves here on launch.
+  },
+  // The apex is served here; www.ioclookup.com is served by the redirect Worker in www/.
+  "routes": [{ "pattern": "ioclookup.com", "custom_domain": true }]
 }
