@@ -29,7 +29,7 @@ const T = {
     asn: (a) => `AS${a.asn} ${a.name}${a.country ? " · " + a.country : ""}`, open: "Open in:",
     huntTitle: "Hunting queries", huntIntro: (d) => `Search your own logs for these indicators over the last ${d} days. Field and table names follow each platform's common schema; adjust them to your environment.`,
     huntSplunk: "Run each search on its own.", huntSkipped: (n) => `${n} private or reserved address(es) left out.`, huntNone: "No indicators that can be searched for in logs.",
-    copy: "Copy", copied: "Copied", days: "Days",
+    copy: "Copy", copied: "Copied", days: "Days", privateAddr: "private or reserved address",
     source: "Source code", loadError: "Feed data could not be loaded. Extraction still works.",
   },
   tr: {
@@ -51,7 +51,7 @@ const T = {
     asn: (a) => `AS${a.asn} ${a.name}${a.country ? " · " + a.country : ""}`, open: "Aç:",
     huntTitle: "Arama sorguları", huntIntro: (d) => `Bu göstergeleri son ${d} gündeki kendi loglarınızda arayın. Tablo ve alan adları her platformun ortak şemasına göre; ortamınıza göre düzenleyin.`,
     huntSplunk: "Her aramayı ayrı çalıştırın.", huntSkipped: (n) => `${n} özel ya da ayrılmış adres dışarıda bırakıldı.`, huntNone: "Loglarda aranabilecek gösterge yok.",
-    copy: "Kopyala", copied: "Kopyalandı", days: "Gün",
+    copy: "Kopyala", copied: "Kopyalandı", days: "Gün", privateAddr: "özel ya da ayrılmış adres",
     source: "Kaynak kodu", loadError: "Feed verisi yüklenemedi. Gösterge çıkarma yine çalışır.",
   },
 };
@@ -129,7 +129,8 @@ function render() {
     }
     tr.append(v);
     const loc = el("td");
-    if (db) {
+    if (ioc.type === "ipv4" && isNonRoutableIPv4(ioc.value)) loc.append(el("span", "meta", t("privateAddr")));
+    else if (db) {
       const hits = matchLocal(db, ioc);
       const feeds = feedsForType(db, ioc.type);
       if (hits.length) for (const h of hits) {
