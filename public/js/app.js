@@ -1,5 +1,5 @@
 import { extract, isNonRoutableIPv4 } from "./extract.js";
-import { loadFeeds, feedsForType, matchLocal } from "./match.js";
+import { loadFeeds, ensureTypes, feedsForType, matchLocal } from "./match.js";
 import { SOURCES, sourcesFor, keyFor } from "./sources.js";
 import { PLATFORMS, buildQuery } from "./queries.js";
 import { pivotsFor } from "./pivots.js";
@@ -84,6 +84,7 @@ function scan() {
   iocs = extract($("input").value, { tlds: db?.tlds || undefined });
   render();
   enrichAsn();
+  if (db) ensureTypes(db, [...new Set(iocs.map((i) => i.type))]).then(render);
 }
 
 async function enrichAsn() {
@@ -131,7 +132,15 @@ function render() {
     if (db) {
       const hits = matchLocal(db, ioc);
       const feeds = feedsForType(db, ioc.type);
-      if (hits.length) for (const h of hits) { const b = el("div", "hit", `${t("inFeed")} ${h.name}`); if (h.detail) b.append(el("div", "meta", h.detail)); loc.append(b); }
+      if (hits.length) for (const h of hits) {
+        const b = el("div", "hit", `${t("inFeed")} ${h.name}`);
+        if (h.detail || h.link) {
+          const m = el("div", "meta", h.detail);
+          if (h.link) { const a = el("a", "", h.detail ? " ↗" : "↗"); a.href = h.link; a.target = "_blank"; a.rel = "noopener noreferrer"; m.append(a); }
+          b.append(m);
+        }
+        loc.append(b);
+      }
       else loc.append(el("span", "meta", feeds.length ? t("noLocal", feeds.map((f) => f.name).join(", ")) : t("noFeed")));
     }
     tr.append(loc);

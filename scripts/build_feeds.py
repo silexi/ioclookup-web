@@ -6,7 +6,7 @@ Sources without that permission are queried from the user's browser with the use
 instead (see public/js/sources.js), never republished.
 
 Output (default public/data/):
-  tor-exit.json, et-compromised.json, kev.json, tlds.txt, meta.json
+  <feed>.<type>.json for each feed and indicator type, tlds.txt, meta.json
   asn/v4/<first octet>.json: IPv4 ranges with AS number, country and AS name (IPtoASN, PDDL),
   split by first octet so the browser only downloads the parts that cover the pasted addresses.
 
@@ -31,34 +31,71 @@ FEEDS = [
     {
         "id": "tor-exit",
         "name": "Tor exit nodes",
-        "url": "https://check.torproject.org/torbulkexitlist",
+        "urls": ["https://check.torproject.org/torbulkexitlist"],
+        "parser": "ip_lines",
         "home": "https://metrics.torproject.org/collector.html",
         "license": "CC0 1.0",
         "license_url": "https://metrics.torproject.org/collector.html",
         "attribution": "The Tor Project",
-        "types": ["ipv4", "ipv6"],
         "min": 300,
     },
     {
         "id": "et-compromised",
         "name": "Emerging Threats compromised IPs",
-        "url": "https://rules.emergingthreats.net/blockrules/compromised-ips.txt",
+        "urls": ["https://rules.emergingthreats.net/blockrules/compromised-ips.txt"],
+        "parser": "ip_lines",
         "home": "https://rules.emergingthreats.net/",
         "license": "GPL-2.0",
         "license_url": "https://community.emergingthreats.net/t/licensing-is-the-compromised-ips-list-also-open/676",
         "attribution": "Proofpoint Emerging Threats",
-        "types": ["ipv4"],
         "min": 50,
     },
     {
         "id": "kev",
         "name": "CISA Known Exploited Vulnerabilities",
-        "url": "https://raw.githubusercontent.com/cisagov/kev-data/develop/known_exploited_vulnerabilities.json",
+        "urls": ["https://raw.githubusercontent.com/cisagov/kev-data/develop/known_exploited_vulnerabilities.json"],
+        "parser": "kev",
         "home": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
         "license": "CC0 1.0",
         "license_url": "https://github.com/cisagov/kev-data",
         "attribution": "CISA",
-        "types": ["cve"],
+        "min": 1000,
+    },
+    {
+        # Indicators shared by researchers on X, last 365 days. The CSV feed is CC0; the abuse.ch
+        # "external" block of the TweetFeed API is not part of it and is not used here.
+        "id": "tweetfeed",
+        "name": "TweetFeed",
+        "urls": ["https://raw.githubusercontent.com/0xDanielLopez/TweetFeed/master/year.csv"],
+        "parser": "tweetfeed",
+        "home": "https://tweetfeed.live/",
+        "license": "CC0 1.0",
+        "license_url": "https://tweetfeed.live/tos/",
+        "attribution": "TweetFeed",
+        "min": 10000,
+    },
+    {
+        # Non-commercial licence: to be removed if the site ever charges (portfolio MK-20).
+        "id": "c2intel",
+        "name": "C2IntelFeeds",
+        "urls": ["https://raw.githubusercontent.com/drb-ra/C2IntelFeeds/master/feeds/IPC2s-30day.csv",
+                 "https://raw.githubusercontent.com/drb-ra/C2IntelFeeds/master/feeds/domainC2s-30day-filter-abused.csv"],
+        "parser": "c2intel",
+        "home": "https://github.com/drb-ra/C2IntelFeeds",
+        "license": "CC BY-NC-SA 4.0",
+        "license_url": "https://github.com/drb-ra/C2IntelFeeds/blob/master/License.md",
+        "attribution": "C2IntelFeeds (drb-ra)",
+        "min": 50,
+    },
+    {
+        "id": "cert-pl",
+        "name": "CERT Polska warning list",
+        "urls": ["https://hole.cert.pl/domains/v2/domains.txt"],
+        "parser": "domain_lines",
+        "home": "https://cert.pl/en/warning-list/",
+        "license": "Free for any purpose, including commercial (CERT Polska data usage policy)",
+        "license_url": "https://cert.pl/en/warning-list/",
+        "attribution": "CERT Polska",
         "min": 1000,
     },
 ]
@@ -166,26 +203,100 @@ def now() -> str:
     return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def ip_type(value: str) -> str:
+    return "ipv6" if ":" in value else "ipv4"
+
+
+def parse_tweetfeed(text: str) -> dict:
+    """date,user,type,value,tags,tweet_url (no header). Detail kept: [date, user, tweet_url]."""
+    import csv
+    out: dict[str, dict] = {}
+    kinds = {"domain": "domain", "url": "url", "md5": "md5", "sha256": "sha256", "sha1": "sha1"}
+    for row in csv.reader(text.splitlines()):
+        if len(row) < 6:
+            continue
+        date, user, kind, value, _tags, link = row[:6]
+        value = value.strip()
+        if kind == "ip":
+            try:
+                value = str(ipaddress.ip_address(value))
+            except ValueError:
+                continue
+            t = ip_type(value)
+        elif kind in kinds:
+            t = kinds[kind]
+            if t in ("domain", "md5", "sha1", "sha256"):
+                value = value.lower()
+        else:
+            continue
+        if not value:
+            continue
+        prev = out.setdefault(t, {}).get(value)
+        if prev is None or date > prev[0]:  # keep the latest report
+            out[t][value] = [date[:10], user, link]
+    return out
+
+
+def parse_c2intel(texts: list[str]) -> dict:
+    """#ip,ioc and #domain,ioc CSV files. Detail kept: the ioc description."""
+    out: dict[str, dict] = {}
+    for text in texts:
+        for line in text.splitlines():
+            if not line or line.startswith("#"):
+                continue
+            value, _, desc = line.partition(",")
+            value = value.strip().lower()
+            try:
+                value = str(ipaddress.ip_address(value))
+                t = ip_type(value)
+            except ValueError:
+                t = "domain"
+            out.setdefault(t, {})[value] = desc.strip()
+    return out
+
+
+def parse_domain_lines(text: str) -> dict:
+    vals = {l.strip().lower() for l in text.splitlines() if l.strip() and not l.startswith("#") and "." in l}
+    return {"domain": {v: None for v in sorted(vals)}}
+
+
+def by_type(f: dict, raws: list[bytes]) -> dict:
+    texts = [r.decode("utf-8", "replace") for r in raws]
+    p = f["parser"]
+    if p == "ip_lines":
+        out: dict[str, dict] = {}
+        for ip in parse_ip_lines(texts[0]):
+            out.setdefault(ip_type(ip), {})[ip] = None
+        return out
+    if p == "kev":
+        return {"cve": parse_kev(raws[0])}
+    if p == "tweetfeed":
+        return parse_tweetfeed(texts[0])
+    if p == "c2intel":
+        return parse_c2intel(texts)
+    if p == "domain_lines":
+        return parse_domain_lines(texts[0])
+    raise ValueError(p)
+
+
 def build(out: Path, fetcher=fetch) -> dict:
+    """Each feed is written as one file per indicator type, <id>.<type>.json = {"v": {value: detail}},
+    so the browser only downloads the types that occur in the pasted text."""
     out.mkdir(parents=True, exist_ok=True)
     meta = {"generated": now(), "feeds": []}
     for f in FEEDS:
-        raw = fetcher(f["url"])
-        if f["id"] == "kev":
-            data = parse_kev(raw)
-            count = len(data)
-            body = {"cves": data}
-        else:
-            ips = parse_ip_lines(raw.decode("utf-8", "replace"))
-            count = len(ips)
-            body = {"ips": ips}
+        data = by_type(f, [fetcher(u) for u in f["urls"]])
+        count = sum(len(v) for v in data.values())
         if count < f["min"]:
             raise RuntimeError(f"{f['id']}: only {count} records, minimum is {f['min']}")
-        (out / f"{f['id']}.json").write_text(json.dumps(body, separators=(",", ":")), encoding="utf-8")
-        entry = {k: f[k] for k in ("id", "name", "url", "home", "license", "license_url", "attribution", "types")}
-        entry.update({"fetched": now(), "count": count})
+        files = {}
+        for t, values in sorted(data.items()):
+            (out / f"{f['id']}.{t}.json").write_text(json.dumps({"v": values}, separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
+            files[t] = len(values)
+        entry = {k: f[k] for k in ("id", "name", "home", "license", "license_url", "attribution")}
+        entry.update({"urls": f["urls"], "fetched": now(), "count": count, "files": files})
         meta["feeds"].append(entry)
-        print(f"{f['id']}: {count}", file=sys.stderr)
+        print(f"{f['id']}: {count} {files}", file=sys.stderr)
     tlds = parse_tlds(fetcher(TLD_URL).decode("ascii", "replace"))
     if len(tlds) < 1000:
         raise RuntimeError(f"tlds: only {len(tlds)}")

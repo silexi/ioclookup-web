@@ -25,7 +25,32 @@ async function proxied(provider, path, key, { method = "GET", body, query = "" }
 
 const err = (msg) => ({ status: "error", summary: msg, link: "" });
 
+// USOM descriptions, from https://siberguvenlik.gov.tr/api/address-description/index
+const USOM_DESC = { PH: "phishing", BP: "banking phishing", MD: "malware distribution domain", MI: "malware distribution IP", MU: "malware distribution URL", MC: "malware command and control", SA: "attack source (scanning, brute force)" };
+const stripUrl = (v) => v.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/\/$/, "").toLowerCase();
+
 export const SOURCES = [
+  {
+    // Türkiye's national CERT list (Siber Güvenlik Başkanlığı, formerly USOM). Its public API accepts
+    // browser requests, so each indicator is queried directly; nothing is copied to this site.
+    id: "usom",
+    name: "USOM (Siber Güvenlik Başkanlığı)",
+    noKey: true,
+    types: ["ipv4", "domain", "url"],
+    proxied: false,
+    minIntervalMs: 300,
+    async query(ioc) {
+      // The url parameter matches substrings, so results are filtered to exact matches here.
+      const r = await fetch(`https://siberguvenlik.gov.tr/api/address/index?url=${enc(ioc.value)}&pageSize=100`);
+      if (!r.ok) return err(`HTTP ${r.status}`);
+      const d = await r.json();
+      const want = ioc.type === "url" ? stripUrl(ioc.value) : ioc.value.toLowerCase();
+      const hits = (d.models || []).filter((m) => stripUrl(String(m.url || "")) === want);
+      if (!hits.length) return { status: "not_listed", summary: "", link: "" };
+      const h = hits[0];
+      return { status: "listed", summary: `${USOM_DESC[h.desc] || h.desc}, ${String(h.date).slice(0, 10)}`, link: "https://siberguvenlik.gov.tr/zararli-baglantilar" };
+    },
+  },
   {
     id: "internetdb",
     name: "Shodan InternetDB",

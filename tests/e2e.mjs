@@ -18,18 +18,23 @@ page.on("request", (r) => { if (!r.url().startsWith(BASE)) external.push(r.url()
 
 await page.goto(BASE + "/");
 await page.waitForFunction(() => document.getElementById("feedList").textContent.includes("records"));
-await page.fill("#input", "Phish from hxxps://login-microsoft[.]com/auth via 185.220.0.5 and 10.0.0.1, exploit CVE-2024-3400, hash d41d8cd98f00b204e9800998ecf8427e, contact bad@evil.ru, relay 2.1.2.3");
+await page.fill("#input", "Phish from hxxps://login-microsoft[.]com/auth via 185.220.0.5 and 10.0.0.1, exploit CVE-2024-3400, hash d41d8cd98f00b204e9800998ecf8427e, contact bad@evil.ru, relay 2.1.2.3, dropper bad7.example.com");
 await page.waitForFunction(() => document.querySelectorAll("#results tbody tr").length >= 7);
+// feed files for the pasted types load after the first render
+await page.waitForFunction(() => /listed in Tor exit nodes/.test(document.querySelector("#results").textContent) && /PAN-OS/.test(document.querySelector("#results").textContent));
 const rows = await page.$$eval("#results tbody tr", (trs) => trs.map((tr) => [...tr.children].map((td) => td.textContent.trim())));
 const find = (v) => rows.find((r) => r[1].startsWith(v));
 assert.ok(find("https://login-microsoft.com/auth"));
 assert.match(find("185.220.0.5")[2], /listed in Tor exit nodes/);
 assert.match(find("CVE-2024-3400")[2], /PAN-OS/);
 assert.match(find("10.0.0.1")[2], /not in/);
-assert.match(find("d41d8cd98f00b204e9800998ecf8427e")[2], /no published feed/);
+assert.match(find("d41d8cd98f00b204e9800998ecf8427e")[2], /not in TweetFeed/);
+assert.match(find("bad@evil.ru")[2], /no published feed/);
+await page.waitForFunction(() => document.querySelector("#results").textContent.includes("listed in TweetFeed"));
+assert.match((await page.$$eval("#results tbody tr", (trs) => trs.map((tr) => tr.textContent))).find((x) => x.includes("bad7.example.com")), /listed in TweetFeed@user2, 2026-10-0\d/);
 // keyless source (InternetDB) makes lookup available, keyed services are offered
 assert.ok(!(await page.isDisabled("#lookupBtn")));
-assert.match(await page.textContent("#lookupNote"), /Shodan InternetDB.*Add API keys/);
+assert.match(await page.textContent("#lookupNote"), /USOM.*Shodan InternetDB.*Add API keys/);
 // ASN context and pivot links
 await page.waitForFunction(() => [...document.querySelectorAll("#results td.value")].some((td) => /AS645\d\d EXAMPLE-AS/.test(td.textContent)));
 assert.match(find("185.220.0.5")[1], /Open in: VirusTotal · AbuseIPDB · Shodan/);
