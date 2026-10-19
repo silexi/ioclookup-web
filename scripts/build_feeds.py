@@ -279,16 +279,49 @@ def by_type(f: dict, raws: list[bytes]) -> dict:
     raise ValueError(p)
 
 
+LIVE = "https://ioclookup.com/data/"
+
+
+def reuse_live(f: dict, out: Path, live_meta: dict | None, fetcher) -> dict | None:
+    """When a source fails, keep serving the copy that is live on the site, with its original
+    fetch time so the page shows how old it is. A feed that was never published is skipped."""
+    prev = next((x for x in (live_meta or {}).get("feeds", []) if x.get("id") == f["id"] and x.get("files")), None)
+    if not prev:
+        return None
+    for t in prev["files"]:
+        (out / f"{f['id']}.{t}.json").write_bytes(fetcher(f"{LIVE}{f['id']}.{t}.json"))
+    return prev
+
+
 def build(out: Path, fetcher=fetch) -> dict:
     """Each feed is written as one file per indicator type, <id>.<type>.json = {"v": {value: detail}},
-    so the browser only downloads the types that occur in the pasted text."""
+    so the browser only downloads the types that occur in the pasted text.
+    A failing source does not stop the build: its live copy is reused (see reuse_live) and the
+    failure is recorded in meta.json under "errors"."""
     out.mkdir(parents=True, exist_ok=True)
-    meta = {"generated": now(), "feeds": []}
+    meta = {"generated": now(), "feeds": [], "errors": []}
+    live_meta = None
+    try:
+        live_meta = json.loads(fetcher(LIVE + "meta.json"))
+    except Exception:  # noqa: BLE001  first deploy, or the site is down
+        pass
     for f in FEEDS:
-        data = by_type(f, [fetcher(u) for u in f["urls"]])
-        count = sum(len(v) for v in data.values())
-        if count < f["min"]:
-            raise RuntimeError(f"{f['id']}: only {count} records, minimum is {f['min']}")
+        try:
+            data = by_type(f, [fetcher(u) for u in f["urls"]])
+            count = sum(len(v) for v in data.values())
+            if count < f["min"]:
+                raise RuntimeError(f"only {count} records, minimum is {f['min']}")
+        except Exception as e:  # noqa: BLE001
+            meta["errors"].append({"feed": f["id"], "error": str(e)[:300], "at": now()})
+            print(f"WARNING {f['id']}: {e}", file=sys.stderr)
+            try:
+                prev = reuse_live(f, out, live_meta, fetcher)
+            except Exception as e2:  # noqa: BLE001
+                prev = None
+                meta["errors"][-1]["reuse"] = str(e2)[:200]
+            if prev:
+                meta["feeds"].append(prev)
+            continue
         files = {}
         for t, values in sorted(data.items()):
             (out / f"{f['id']}.{t}.json").write_text(json.dumps({"v": values}, separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
@@ -297,6 +330,8 @@ def build(out: Path, fetcher=fetch) -> dict:
         entry.update({"urls": f["urls"], "fetched": now(), "count": count, "files": files})
         meta["feeds"].append(entry)
         print(f"{f['id']}: {count} {files}", file=sys.stderr)
+    if not meta["feeds"]:
+        raise RuntimeError("no feed could be built or reused")
     tlds = parse_tlds(fetcher(TLD_URL).decode("ascii", "replace"))
     if len(tlds) < 1000:
         raise RuntimeError(f"tlds: only {len(tlds)}")

@@ -86,10 +86,28 @@ class T(unittest.TestCase):
             self.assertEqual(two["names"]["65000"], ["CROSSING", "DE"])
             self.assertNotIn("0", one["names"])
 
-    def test_short_feed_fails(self):
+    def test_short_feed_is_reported_and_live_copy_reused(self):
+        live = {"feeds": [{"id": "tor-exit", "name": "Tor exit nodes", "fetched": "2026-10-18T00:00:00Z", "count": 1, "files": {"ipv4": 1}}]}
+        base = fake_fetcher({"tor": 10, "et": 60, "kev": 1200})
+
+        def f(url):
+            if url == B.LIVE + "meta.json":
+                return json.dumps(live).encode()
+            if url == B.LIVE + "tor-exit.ipv4.json":
+                return b'{"v":{"185.220.0.1":null}}'
+            return base(url)
         with tempfile.TemporaryDirectory() as d:
-            with self.assertRaises(RuntimeError):
-                B.build(Path(d), fake_fetcher({"tor": 10, "et": 60, "kev": 1200}))
+            meta = B.build(Path(d), f)
+            self.assertEqual(meta["errors"][0]["feed"], "tor-exit")
+            tor = next(x for x in meta["feeds"] if x["id"] == "tor-exit")
+            self.assertEqual(tor["fetched"], "2026-10-18T00:00:00Z")
+            self.assertIn("185.220.0.1", Path(d, "tor-exit.ipv4.json").read_text())
+
+    def test_failed_feed_without_live_copy_is_skipped(self):
+        with tempfile.TemporaryDirectory() as d:
+            meta = B.build(Path(d), fake_fetcher({"tor": 10, "et": 60, "kev": 1200}))  # live meta unavailable
+            self.assertNotIn("tor-exit", [x["id"] for x in meta["feeds"]])
+            self.assertEqual(meta["errors"][0]["feed"], "tor-exit")
 
 
 if __name__ == "__main__":

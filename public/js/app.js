@@ -236,7 +236,9 @@ function renderSources() {
     ul.append(li);
   }
   box.append(ul);
-  const h = Math.floor((Date.now() - new Date(db.meta.generated).getTime()) / 3600000);
+  // A feed whose source failed keeps its last copy and its own fetch time, so warn on the oldest one.
+  const oldest = Math.min(...db.meta.feeds.map((f) => new Date(f.fetched).getTime()));
+  const h = Math.floor((Date.now() - oldest) / 3600000);
   $("staleWarn").hidden = h < STALE_HOURS;
   $("staleWarn").textContent = t("stale", h);
 }
