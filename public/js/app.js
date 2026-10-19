@@ -23,7 +23,7 @@ const T = {
     keysTitle: "API keys", keysIntro: "Keys stay in this browser. Services that do not accept browser requests are reached through this site's pass-through, which forwards the key and stores nothing (source code linked below).",
     remember: "Remember keys in this browser (otherwise they are forgotten when the tab closes)", cancel: "Cancel", save: "Save", getKey: "get a key",
     viaProxy: "via this site's pass-through", direct: "directly from your browser",
-    privacy: "No account, no tracking. Pasted text is processed in your browser.", source: "Source code", loadError: "Feed data could not be loaded. Extraction still works.",
+    source: "Source code", loadError: "Feed data could not be loaded. Extraction still works.",
   },
   tr: {
     keys: "API anahtarları", lead: "Bir alarm, e-posta, rapor ya da log yapıştırın. Göstergeler tarayıcınızda çıkarılır. Sorgu çalıştırmadığınız sürece yapıştırdığınız hiçbir şey bir yere gönderilmez.",
@@ -41,7 +41,7 @@ const T = {
     keysTitle: "API anahtarları", keysIntro: "Anahtarlar bu tarayıcıda kalır. Tarayıcıdan gelen isteği kabul etmeyen servislere bu sitenin aktarıcısı üzerinden gidilir; aktarıcı anahtarı iletir, hiçbir şey saklamaz (kaynak kodu aşağıda).",
     remember: "Anahtarları bu tarayıcıda hatırla (aksi halde sekme kapanınca silinir)", cancel: "İptal", save: "Kaydet", getKey: "anahtar al",
     viaProxy: "bu sitenin aktarıcısı üzerinden", direct: "doğrudan tarayıcınızdan",
-    privacy: "Hesap yok, takip yok. Yapıştırılan metin tarayıcınızda işlenir.", source: "Kaynak kodu", loadError: "Feed verisi yüklenemedi. Gösterge çıkarma yine çalışır.",
+    source: "Kaynak kodu", loadError: "Feed verisi yüklenemedi. Gösterge çıkarma yine çalışır.",
   },
 };
 let lang = "en";
