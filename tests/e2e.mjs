@@ -18,17 +18,34 @@ page.on("request", (r) => { if (!r.url().startsWith(BASE)) external.push(r.url()
 
 await page.goto(BASE + "/");
 await page.waitForFunction(() => document.getElementById("feedList").textContent.includes("records"));
-await page.fill("#input", "Phish from hxxps://login-microsoft[.]com/auth via 185.220.0.5 and 10.0.0.1, exploit CVE-2024-3400, hash d41d8cd98f00b204e9800998ecf8427e, contact bad@evil.ru");
+await page.fill("#input", "Phish from hxxps://login-microsoft[.]com/auth via 185.220.0.5 and 10.0.0.1, exploit CVE-2024-3400, hash d41d8cd98f00b204e9800998ecf8427e, contact bad@evil.ru, relay 2.1.2.3");
 await page.waitForFunction(() => document.querySelectorAll("#results tbody tr").length >= 7);
 const rows = await page.$$eval("#results tbody tr", (trs) => trs.map((tr) => [...tr.children].map((td) => td.textContent.trim())));
-const find = (v) => rows.find((r) => r[1] === v);
+const find = (v) => rows.find((r) => r[1].startsWith(v));
 assert.ok(find("https://login-microsoft.com/auth"));
 assert.match(find("185.220.0.5")[2], /listed in Tor exit nodes/);
 assert.match(find("CVE-2024-3400")[2], /PAN-OS/);
 assert.match(find("10.0.0.1")[2], /not in/);
 assert.match(find("d41d8cd98f00b204e9800998ecf8427e")[2], /no published feed/);
-assert.ok(await page.isDisabled("#lookupBtn"), "no keys, no lookup");
-assert.match(await page.textContent("#lookupNote"), /Add API keys/);
+// keyless source (InternetDB) makes lookup available, keyed services are offered
+assert.ok(!(await page.isDisabled("#lookupBtn")));
+assert.match(await page.textContent("#lookupNote"), /Shodan InternetDB.*Add API keys/);
+// ASN context and pivot links
+await page.waitForFunction(() => [...document.querySelectorAll("#results td.value")].some((td) => /AS645\d\d EXAMPLE-AS/.test(td.textContent)));
+assert.match(find("185.220.0.5")[1], /Open in: VirusTotal · AbuseIPDB · Shodan/);
+assert.doesNotMatch(find("10.0.0.1")[1], /Open in/);
+assert.equal(await page.getAttribute('#results a:text("NVD")', "href"), "https://nvd.nist.gov/vuln/detail/CVE-2024-3400");
+// hunting queries
+assert.ok(await page.isVisible("#hunt"));
+let q = await page.inputValue("#huntText");
+assert.match(q, /union isfuzzy=true/);
+assert.ok(q.includes("185.220.0.5") && !q.includes("10.0.0.1"));
+assert.match(await page.textContent("#huntNote"), /1 private or reserved/);
+await page.click('#huntTabs button[data-platform="aql"]');
+await page.fill("#huntDays", "7");
+await page.dispatchEvent("#huntDays", "change");
+q = await page.inputValue("#huntText");
+assert.match(q, /LAST 7 DAYS/);
 if (OUT) await page.screenshot({ path: `${OUT}/ioc-en.png`, fullPage: true });
 
 // keys dialog: session only by default
@@ -45,7 +62,8 @@ assert.match(await page.textContent("#lookupNote"), /AlienVault OTX/);
 assert.deepEqual(external, []);
 
 await page.click("[data-lang=tr]");
-assert.match(await page.textContent("#lookupBtn"), /Anahtarlarımla sorgula/);
+assert.match(await page.textContent("#lookupBtn"), /Sorgula/);
+assert.match(await page.textContent("#hunt h2"), /Arama sorguları/);
 if (OUT) await page.screenshot({ path: `${OUT}/ioc-tr.png`, fullPage: true });
 await page.setViewportSize({ width: 375, height: 800 });
 const overflow = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);

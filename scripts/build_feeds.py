@@ -7,6 +7,8 @@ instead (see public/js/sources.js), never republished.
 
 Output (default public/data/):
   tor-exit.json, et-compromised.json, kev.json, tlds.txt, meta.json
+  asn/v4/<first octet>.json: IPv4 ranges with AS number, country and AS name (IPtoASN, PDDL),
+  split by first octet so the browser only downloads the parts that cover the pasted addresses.
 
 Standard library only. Each feed has a minimum record count; a feed that comes back smaller
 fails the build so a broken download never replaces a good snapshot.
@@ -15,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import gzip
 import ipaddress
 import json
 import sys
@@ -60,6 +63,14 @@ FEEDS = [
     },
 ]
 TLD_URL = "https://data.iana.org/TLD/tlds-alpha-by-domain.txt"
+ASN = {
+    "url": "https://iptoasn.com/data/ip2asn-v4-u32.tsv.gz",
+    "home": "https://iptoasn.com/",
+    "license": "PDDL 1.0",
+    "license_url": "https://opendatacommons.org/licenses/pddl/1.0/",
+    "attribution": "IPtoASN",
+    "min": 100000,
+}
 GPL2_URL = "https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt"
 
 
@@ -111,6 +122,46 @@ def parse_tlds(text: str) -> list[str]:
     return sorted({l.strip().lower() for l in text.splitlines() if l.strip() and not l.startswith("#")})
 
 
+def parse_asn(raw: bytes) -> list[tuple[int, int, int, str, str]]:
+    """ip2asn-v4-u32 rows: start end asn country description (tab separated, addresses as uint32).
+    Unrouted ranges (AS 0) are dropped."""
+    text = gzip.decompress(raw).decode("utf-8", "replace") if raw[:2] == b"\x1f\x8b" else raw.decode("utf-8", "replace")
+    rows = []
+    for line in text.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 5:
+            continue
+        try:
+            start, end, asn = int(parts[0]), int(parts[1]), int(parts[2])
+        except ValueError:
+            continue
+        if asn == 0 or not (0 <= start <= end <= 0xFFFFFFFF):
+            continue
+        rows.append((start, end, asn, parts[3].strip(), parts[4].strip()))
+    rows.sort()
+    return rows
+
+
+def write_asn_shards(rows, out: Path) -> list[int]:
+    """One file per first octet. A range that crosses an octet boundary is split."""
+    shards: dict[int, dict] = {}
+    for start, end, asn, cc, name in rows:
+        while start <= end:
+            octet = start >> 24
+            stop = min(end, (octet << 24) | 0xFFFFFF)
+            sh = shards.setdefault(octet, {"s": [], "e": [], "a": [], "names": {}})
+            sh["s"].append(start)
+            sh["e"].append(stop)
+            sh["a"].append(asn)
+            sh["names"][str(asn)] = [name, cc]
+            start = stop + 1
+    d = out / "asn" / "v4"
+    d.mkdir(parents=True, exist_ok=True)
+    for octet, sh in shards.items():
+        (d / f"{octet}.json").write_text(json.dumps(sh, separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
+    return sorted(shards)
+
+
 def now() -> str:
     return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -140,6 +191,14 @@ def build(out: Path, fetcher=fetch) -> dict:
         raise RuntimeError(f"tlds: only {len(tlds)}")
     (out / "tlds.txt").write_text("\n".join(tlds) + "\n", encoding="ascii")
     (out / "GPL-2.0.txt").write_bytes(fetcher(GPL2_URL))
+    rows = parse_asn(fetcher(ASN["url"]))
+    if len(rows) < ASN["min"]:
+        raise RuntimeError(f"asn: only {len(rows)} ranges, minimum is {ASN['min']}")
+    octets = write_asn_shards(rows, out)
+    meta["asn"] = {k: ASN[k] for k in ("url", "home", "license", "license_url", "attribution")}
+    # octets lists which shard files exist, so the browser never requests a missing one
+    meta["asn"].update({"fetched": now(), "ranges": len(rows), "octets": octets})
+    print(f"asn: {len(rows)} ranges in {len(octets)} files", file=sys.stderr)
     (out / "meta.json").write_text(json.dumps(meta, indent=1) + "\n", encoding="utf-8")
     return meta
 

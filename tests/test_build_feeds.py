@@ -24,6 +24,14 @@ def fake_fetcher(sizes):
             return ("# Version\n" + "\n".join(f"T{i}" for i in range(1500)) + "\nCOM\n").encode()
         if "gpl" in url:
             return b"GNU GENERAL PUBLIC LICENSE"
+        if "ip2asn" in url:
+            import gzip
+            n = sizes.get("asn", 200001)
+            rows = [f"{i * 256}\t{i * 256 + 255}\t{64500 + i % 3}\tTR\tEXAMPLE-AS-{i % 3}" for i in range(1, n)]
+            rows += ["16777216\t33554431\t0\tNone\tNot routed", "garbage"]
+            # one range that crosses from 1.x.x.x into 2.x.x.x
+            rows.append(f"{(1 << 24) | 0xFFFF00}\t{(2 << 24) | 0xFF}\t65000\tDE\tCROSSING")
+            return gzip.compress("\n".join(rows).encode())
         raise AssertionError(url)
     return f
 
@@ -43,6 +51,17 @@ class T(unittest.TestCase):
             self.assertIn("com", Path(d, "tlds.txt").read_text().split())
             for f in meta["feeds"]:
                 self.assertTrue(f["license"] and f["attribution"] and f["count"] > 0)
+
+    def test_asn_shards(self):
+        with tempfile.TemporaryDirectory() as d:
+            meta = B.build(Path(d), fake_fetcher({"tor": 400, "et": 60, "kev": 1200}))
+            self.assertEqual(meta["asn"]["license"], "PDDL 1.0")
+            one = json.loads(Path(d, "asn", "v4", "1.json").read_text())
+            two = json.loads(Path(d, "asn", "v4", "2.json").read_text())
+            self.assertEqual(one["e"][-1], (1 << 24) | 0xFFFFFF)  # crossing range split at the octet boundary
+            self.assertEqual(two["s"][0], 2 << 24)
+            self.assertEqual(two["names"]["65000"], ["CROSSING", "DE"])
+            self.assertNotIn("0", one["names"])
 
     def test_short_feed_fails(self):
         with tempfile.TemporaryDirectory() as d:

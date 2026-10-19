@@ -8,6 +8,10 @@ Paste text, get the indicators of compromise in it, and check them. Extraction a
 |---|---|---|
 | Extraction (`public/js/extract.js`) | IPv4/IPv6, domains (checked against the IANA TLD list), URLs, emails, MD5/SHA1/SHA256, CVE IDs. Defanged input (`hxxp`, `[.]`, `[at]`) is accepted. | Nobody. It runs in the browser. |
 | Published feeds (`public/js/match.js`) | Daily snapshots downloaded by `scripts/build_feeds.py` and matched in the browser. | Nobody. The browser downloads the whole snapshot. |
+| AS context (`public/js/asn.js`) | Each public IPv4 address is matched to its AS number, AS name and country from the IPtoASN snapshot. | Nobody. Only the snapshot file for the address's first octet is downloaded. |
+| Search links (`public/js/pivots.js`) | Links that open the indicator on VirusTotal, AbuseIPDB, Shodan, GreyNoise, urlscan, OTX, ViriBack, NVD. | The service, only if you click. |
+| Hunting queries (`public/js/queries.js`) | Queries for Microsoft Sentinel (KQL), Splunk (SPL with CIM data models), QRadar (AQL), Elastic (KQL with ECS) and Sigma, built from the indicators. Private and reserved IPv4 addresses are left out. | Nobody. Built in the browser. |
+| Shodan InternetDB (`public/js/sources.js`) | Open ports, known CVEs, tags and hostnames for public IPv4 addresses, without a key, when you press Look up. Free for non-commercial use; it is removed if the site ever charges. | Shodan. |
 | Lookups with your keys (`public/js/sources.js`) | Only when you press the button, only for sources you added a key for. Private and reserved IPs are never sent. | The lookup service you chose. |
 | Pass-through (`src/worker.js`) | For services that do not accept browser requests (no CORS): ThreatFox, URLhaus, AbuseIPDB, VirusTotal. Fixed endpoints only, same-origin requests only, nothing stored or logged. | The lookup service, through this site's Worker. |
 
@@ -22,6 +26,7 @@ Only feeds whose license allows public redistribution are published. Each snapsh
 | Tor exit nodes (The Tor Project) | CC0 1.0 |
 | Emerging Threats compromised IPs (Proofpoint) | GPL-2.0, license text shipped as `data/GPL-2.0.txt` |
 | CISA Known Exploited Vulnerabilities | CC0 1.0 |
+| IPtoASN IPv4 to AS mapping | PDDL 1.0 |
 
 abuse.ch (URLhaus, ThreatFox, MalwareBazaar) and Spamhaus DROP data are not republished: their terms do not grant redistribution. They are available as lookups with your own key. Permission to publish has been requested.
 

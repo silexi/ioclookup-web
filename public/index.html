@@ -40,6 +40,20 @@
 
   <div id="results"></div>
 
+  <section id="hunt" class="hunt" hidden>
+    <h2 data-i18n="huntTitle"></h2>
+    <p class="meta" id="huntIntro"></p>
+    <div class="hunt-bar">
+      <div id="huntTabs" class="tabs" role="group"></div>
+      <label class="days"><span data-i18n="days"></span> <input id="huntDays" type="number" min="1" max="365" value="30"></label>
+    </div>
+    <textarea id="huntText" readonly spellcheck="false" aria-labelledby="huntIntro"></textarea>
+    <div class="bar">
+      <span id="huntNote" class="meta"></span>
+      <button type="button" class="btn" id="huntCopy" data-i18n="copy"></button>
+    </div>
+  </section>
+
   <section class="sources">
     <h2 data-i18n="sourcesTitle"></h2>
     <p class="meta" data-i18n="sourcesIntro"></p>

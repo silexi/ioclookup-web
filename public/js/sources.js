@@ -4,7 +4,9 @@
 // Sources that allow browser requests are called directly. The others go through /api/p/,
 // a pass-through in this site's Worker that forwards the key and stores nothing (src/worker.js).
 //
-// query() returns { status: "listed" | "not_listed" | "error", summary, link }.
+// query() returns { status: "listed" | "not_listed" | "info" | "error", summary, link }.
+// "info" is for sources that describe an address (open ports, hostnames) rather than list it as bad.
+// Sources with noKey: true need no key and are queried directly from the browser.
 
 const enc = encodeURIComponent;
 const b64url = (s) => btoa(unescape(encodeURIComponent(s))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -24,6 +26,27 @@ async function proxied(provider, path, key, { method = "GET", body, query = "" }
 const err = (msg) => ({ status: "error", summary: msg, link: "" });
 
 export const SOURCES = [
+  {
+    id: "internetdb",
+    name: "Shodan InternetDB",
+    noKey: true,
+    // Free for non-commercial use (https://blog.shodan.io/introducing-the-internetdb-api/). Remove if the site starts charging.
+    types: ["ipv4"],
+    proxied: false,
+    minIntervalMs: 250,
+    async query(ioc) {
+      const r = await fetch(`https://internetdb.shodan.io/${enc(ioc.value)}`);
+      if (r.status === 404) return { status: "not_listed", summary: "no data", link: "" };
+      if (!r.ok) return err(`HTTP ${r.status}`);
+      const d = await r.json();
+      const parts = [];
+      if (d.ports?.length) parts.push(`ports ${d.ports.slice(0, 12).join(", ")}${d.ports.length > 12 ? ", ..." : ""}`);
+      if (d.vulns?.length) parts.push(`${d.vulns.length} known CVE(s)`);
+      if (d.tags?.length) parts.push(`tags: ${d.tags.join(", ")}`);
+      if (d.hostnames?.length) parts.push(`hostnames: ${d.hostnames.slice(0, 3).join(", ")}`);
+      return { status: "info", summary: parts.join("; ") || "no open ports seen", link: `https://www.shodan.io/host/${enc(ioc.value)}` };
+    },
+  },
   {
     id: "threatfox",
     name: "abuse.ch ThreatFox",
@@ -115,7 +138,7 @@ export const SOURCES = [
 ];
 
 export function sourcesFor(type, keys) {
-  return SOURCES.filter((s) => s.types.includes(type) && keyFor(s, keys));
+  return SOURCES.filter((s) => s.types.includes(type) && (s.noKey || keyFor(s, keys)));
 }
 
 export function keyFor(source, keys) {

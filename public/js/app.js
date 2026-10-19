@@ -1,6 +1,9 @@
 import { extract, isNonRoutableIPv4 } from "./extract.js";
 import { loadFeeds, feedsForType, matchLocal } from "./match.js";
 import { SOURCES, sourcesFor, keyFor } from "./sources.js";
+import { PLATFORMS, buildQuery } from "./queries.js";
+import { pivotsFor } from "./pivots.js";
+import { asnFor } from "./asn.js";
 
 const STALE_HOURS = 48;
 const KEYS = "ioclookup_keys";
@@ -9,9 +12,9 @@ const LANG = "ioclookup_lang";
 const T = {
   en: {
     keys: "API keys", lead: "Paste an alert, an email, a report or a log. Indicators are extracted in your browser. Nothing you paste is sent anywhere unless you run a lookup.",
-    inputLabel: "Text to scan", clear: "Clear", lookup: "Look up with my keys",
+    inputLabel: "Text to scan", clear: "Clear", lookup: "Look up",
     counts: (n, by) => n ? `${n} indicators: ${by}` : "No indicators found yet.",
-    noKeys: "Add API keys to look indicators up in services such as ThreatFox, URLhaus, AbuseIPDB, VirusTotal and OTX.",
+    noKeys: "Add API keys to also look indicators up in services such as ThreatFox, URLhaus, AbuseIPDB, VirusTotal and OTX.",
     lookupNote: (srcs) => `Lookup sends each indicator to: ${srcs}. Private and reserved IP addresses are never sent.`,
     type: "Type", value: "Indicator", local: "Published feeds", external: "Your lookups",
     noLocal: (names) => `not in ${names}`, noFeed: "no published feed for this type", inFeed: "listed in",
@@ -23,13 +26,17 @@ const T = {
     keysTitle: "API keys", keysIntro: "Keys stay in this browser. Services that do not accept browser requests are reached through this site's pass-through, which forwards the key and stores nothing (source code linked below).",
     remember: "Remember keys in this browser (otherwise they are forgotten when the tab closes)", cancel: "Cancel", save: "Save", getKey: "get a key",
     viaProxy: "via this site's pass-through", direct: "directly from your browser",
+    asn: (a) => `AS${a.asn} ${a.name}${a.country ? " · " + a.country : ""}`, open: "Open in:",
+    huntTitle: "Hunting queries", huntIntro: (d) => `Search your own logs for these indicators over the last ${d} days. Field and table names follow each platform's common schema; adjust them to your environment.`,
+    huntSplunk: "Run each search on its own.", huntSkipped: (n) => `${n} private or reserved address(es) left out.`, huntNone: "No indicators that can be searched for in logs.",
+    copy: "Copy", copied: "Copied", days: "Days",
     source: "Source code", loadError: "Feed data could not be loaded. Extraction still works.",
   },
   tr: {
     keys: "API anahtarları", lead: "Bir alarm, e-posta, rapor ya da log yapıştırın. Göstergeler tarayıcınızda çıkarılır. Sorgu çalıştırmadığınız sürece yapıştırdığınız hiçbir şey bir yere gönderilmez.",
-    inputLabel: "Taranacak metin", clear: "Temizle", lookup: "Anahtarlarımla sorgula",
+    inputLabel: "Taranacak metin", clear: "Temizle", lookup: "Sorgula",
     counts: (n, by) => n ? `${n} gösterge: ${by}` : "Henüz gösterge bulunmadı.",
-    noKeys: "ThreatFox, URLhaus, AbuseIPDB, VirusTotal ve OTX gibi servislerde sorgulamak için API anahtarı ekleyin.",
+    noKeys: "ThreatFox, URLhaus, AbuseIPDB, VirusTotal ve OTX gibi servislerde de sorgulamak için API anahtarı ekleyin.",
     lookupNote: (srcs) => `Sorgu her göstergeyi şu servislere gönderir: ${srcs}. Özel ve ayrılmış IP adresleri hiçbir zaman gönderilmez.`,
     type: "Tür", value: "Gösterge", local: "Yayımlanan feed'ler", external: "Sorgularınız",
     noLocal: (names) => `${names} içinde yok`, noFeed: "bu tür için yayımlanan feed yok", inFeed: "listede:",
@@ -41,6 +48,10 @@ const T = {
     keysTitle: "API anahtarları", keysIntro: "Anahtarlar bu tarayıcıda kalır. Tarayıcıdan gelen isteği kabul etmeyen servislere bu sitenin aktarıcısı üzerinden gidilir; aktarıcı anahtarı iletir, hiçbir şey saklamaz (kaynak kodu aşağıda).",
     remember: "Anahtarları bu tarayıcıda hatırla (aksi halde sekme kapanınca silinir)", cancel: "İptal", save: "Kaydet", getKey: "anahtar al",
     viaProxy: "bu sitenin aktarıcısı üzerinden", direct: "doğrudan tarayıcınızdan",
+    asn: (a) => `AS${a.asn} ${a.name}${a.country ? " · " + a.country : ""}`, open: "Aç:",
+    huntTitle: "Arama sorguları", huntIntro: (d) => `Bu göstergeleri son ${d} gündeki kendi loglarınızda arayın. Tablo ve alan adları her platformun ortak şemasına göre; ortamınıza göre düzenleyin.`,
+    huntSplunk: "Her aramayı ayrı çalıştırın.", huntSkipped: (n) => `${n} özel ya da ayrılmış adres dışarıda bırakıldı.`, huntNone: "Loglarda aranabilecek gösterge yok.",
+    copy: "Kopyala", copied: "Kopyalandı", days: "Gün",
     source: "Kaynak kodu", loadError: "Feed verisi yüklenemedi. Gösterge çıkarma yine çalışır.",
   },
 };
@@ -50,6 +61,9 @@ const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
 
 let db = null;
+let asnInfo = new Map(); // ip -> { asn, name, country } | null
+let huntPlatform = "kql";
+let huntDays = 30;
 let iocs = [];
 let lookups = new Map(); // `${source}|${type}|${value}` -> result
 const store = (s) => { try { return window[s]; } catch { return null; } };
@@ -69,6 +83,16 @@ let keys = readKeys();
 function scan() {
   iocs = extract($("input").value, { tlds: db?.tlds || undefined });
   render();
+  enrichAsn();
+}
+
+async function enrichAsn() {
+  const octets = db?.meta?.asn?.octets;
+  if (!octets) return;
+  const todo = iocs.filter((i) => i.type === "ipv4" && !asnInfo.has(i.value) && !isNonRoutableIPv4(i.value));
+  if (!todo.length) return;
+  await Promise.all(todo.map(async (i) => asnInfo.set(i.value, await asnFor(i.value, { octets }).catch(() => null))));
+  render();
 }
 
 function render() {
@@ -76,9 +100,11 @@ function render() {
   for (const i of iocs) by[i.type] = (by[i.type] || 0) + 1;
   $("counts").textContent = t("counts", iocs.length, Object.entries(by).map(([k, v]) => `${v} ${k}`).join(", "));
   for (const id of ["exportCsv", "exportJson"]) $(id).disabled = !iocs.length;
-  const usable = SOURCES.filter((s) => keyFor(s, keys));
+  const usable = SOURCES.filter((s) => s.noKey || keyFor(s, keys));
   $("lookupBtn").disabled = !iocs.length || !usable.length;
-  $("lookupNote").textContent = usable.length ? t("lookupNote", [...new Set(usable.map((s) => s.name))].join(", ")) : t("noKeys");
+  const keyed = usable.some((s) => !s.noKey);
+  $("lookupNote").textContent = t("lookupNote", [...new Set(usable.map((s) => s.name))].join(", ")) + (keyed ? "" : " " + t("noKeys"));
+  renderHunt();
 
   const box = $("results");
   box.textContent = "";
@@ -91,7 +117,16 @@ function render() {
   for (const ioc of iocs) {
     const tr = el("tr");
     tr.append(el("td", "type", ioc.type));
-    const v = el("td", "value"); v.append(el("code", "", ioc.value)); tr.append(v);
+    const v = el("td", "value"); v.append(el("code", "", ioc.value));
+    const a = asnInfo.get(ioc.value);
+    if (a) v.append(el("div", "meta", t("asn", a)));
+    const pv = ioc.type === "ipv4" && isNonRoutableIPv4(ioc.value) ? [] : pivotsFor(ioc);
+    if (pv.length) {
+      const line = el("div", "pivots meta", t("open") + " ");
+      pv.forEach((p, k) => { const link = el("a", "", p.name); link.href = p.url; link.target = "_blank"; link.rel = "noopener noreferrer"; line.append(link); if (k < pv.length - 1) line.append(" · "); });
+      v.append(line);
+    }
+    tr.append(v);
     const loc = el("td");
     if (db) {
       const hits = matchLocal(db, ioc);
@@ -106,7 +141,7 @@ function render() {
       if (!r) continue;
       const line = el("div", `ext ${r.status}`);
       line.append(el("strong", "", s.name + ": "));
-      line.append(document.createTextNode(t(r.status === "not_listed" ? "notListed" : r.status) + (r.summary ? ` (${r.summary})` : "")));
+      line.append(document.createTextNode(r.status === "info" ? r.summary : t(r.status === "not_listed" ? "notListed" : r.status) + (r.summary ? ` (${r.summary})` : "")));
       if (r.link) { const a = el("a", "", "↗"); a.href = r.link; a.target = "_blank"; a.rel = "noopener noreferrer"; line.append(" ", a); }
       ext.append(line);
     }
@@ -118,6 +153,18 @@ function render() {
   wrap.append(table);
   box.append(wrap);
   box.append(el("p", "meta", t("notClean")));
+}
+
+function renderHunt() {
+  const box = $("hunt");
+  box.hidden = !iocs.length;
+  if (!iocs.length) return;
+  $("huntIntro").textContent = t("huntIntro", huntDays);
+  for (const b of $("huntTabs").querySelectorAll("button")) b.setAttribute("aria-pressed", String(b.dataset.platform === huntPlatform));
+  const { text, skipped } = buildQuery(huntPlatform, iocs, huntDays);
+  $("huntText").value = text || t("huntNone");
+  $("huntCopy").disabled = !text;
+  $("huntNote").textContent = [huntPlatform === "spl" && text ? t("huntSplunk") : "", skipped ? t("huntSkipped", skipped) : ""].filter(Boolean).join(" ");
 }
 
 async function lookupAll() {
@@ -150,6 +197,7 @@ function download(name, text, type) {
 function rows() {
   return iocs.map((i) => ({
     type: i.type, value: i.value,
+    asn: asnInfo.get(i.value) ? `AS${asnInfo.get(i.value).asn} ${asnInfo.get(i.value).name}` : "",
     feeds: db ? matchLocal(db, i).map((h) => h.feed).join(";") : "",
     lookups: SOURCES.map((s) => lookups.get(`${s.id}|${i.type}|${i.value}`)).map((r, k) => r ? `${SOURCES[k].id}:${r.status}` : "").filter(Boolean).join(";"),
   }));
@@ -161,6 +209,13 @@ function renderSources() {
   box.textContent = "";
   if (!db) return;
   const ul = el("ul");
+  if (db.meta.asn) {
+    const m = db.meta.asn;
+    const li = el("li", "", `AS: ${m.ranges.toLocaleString(lang === "tr" ? "tr-TR" : "en-US")} IPv4 ranges, license ${m.license} · `);
+    const a = el("a", "", m.attribution); a.href = m.home; a.rel = "noopener"; li.append(a);
+    li.append(el("span", "meta", ` · ${t("updated")} ${new Date(m.fetched).toISOString().slice(0, 16).replace("T", " ")} UTC`));
+    ul.append(li);
+  }
   for (const f of db.meta.feeds) {
     const li = el("li", "", t("feedLine", f) + " · ");
     const a = el("a", "", f.attribution); a.href = f.home; a.rel = "noopener"; li.append(a);
@@ -182,6 +237,7 @@ function openKeys() {
   box.textContent = "";
   const seen = new Set();
   for (const s of SOURCES) {
+    if (s.noKey) continue;
     const id = s.sharesKeyWith || s.id;
     if (seen.has(id)) continue;
     seen.add(id);
@@ -218,9 +274,19 @@ function applyLang(l) {
 for (const b of document.querySelectorAll("[data-lang]")) b.addEventListener("click", () => { try { localStorage.setItem(LANG, b.dataset.lang); } catch {} applyLang(b.dataset.lang); });
 $("keysBtn").addEventListener("click", openKeys);
 $("lookupBtn").addEventListener("click", lookupAll);
-$("clearBtn").addEventListener("click", () => { $("input").value = ""; lookups = new Map(); scan(); });
+$("clearBtn").addEventListener("click", () => { $("input").value = ""; lookups = new Map(); asnInfo = new Map(); scan(); });
 $("exportJson").addEventListener("click", () => download("iocs.json", JSON.stringify(rows(), null, 2), "application/json"));
-$("exportCsv").addEventListener("click", () => download("iocs.csv", ["type,value,feeds,lookups", ...rows().map((r) => [r.type, r.value, r.feeds, r.lookups].map(csvCell).join(","))].join("\n") + "\n", "text/csv"));
+$("exportCsv").addEventListener("click", () => download("iocs.csv", ["type,value,asn,feeds,lookups", ...rows().map((r) => [r.type, r.value, r.asn, r.feeds, r.lookups].map(csvCell).join(","))].join("\n") + "\n", "text/csv"));
+for (const p of PLATFORMS) {
+  const b = el("button", "", p.name); b.type = "button"; b.dataset.platform = p.id;
+  b.addEventListener("click", () => { huntPlatform = p.id; renderHunt(); });
+  $("huntTabs").append(b);
+}
+$("huntDays").addEventListener("change", () => { const d = parseInt($("huntDays").value, 10); huntDays = d > 0 && d <= 365 ? d : 30; $("huntDays").value = huntDays; renderHunt(); });
+$("huntCopy").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText($("huntText").value); } catch { $("huntText").select(); document.execCommand("copy"); }
+  $("huntCopy").textContent = t("copied"); setTimeout(() => { $("huntCopy").textContent = t("copy"); }, 1500);
+});
 let timer = 0;
 $("input").addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(scan, 150); });
 
