@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IOC Lookup: extract and check indicators in your browser</title>
+<meta name="description" content="Paste an alert, email or report. Indicators of compromise are extracted in your browser and checked against open threat feeds and, with your own keys, against lookup services.">
+<link rel="stylesheet" href="/css/style.css">
+<script type="module" src="/js/app.js"></script>
+</head>
+<body>
+<header class="top">
+  <div class="wrap row">
+    <a class="brand" href="/">IOC Lookup</a>
+    <div class="actions">
+      <div class="lang" role="group" aria-label="Language">
+        <button type="button" data-lang="en">EN</button>
+        <button type="button" data-lang="tr">TR</button>
+      </div>
+      <button type="button" class="btn ghost" id="keysBtn" data-i18n="keys"></button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <p class="lead" data-i18n="lead"></p>
+  <label class="sr" for="input" data-i18n="inputLabel"></label>
+  <textarea id="input" spellcheck="false" autocomplete="off"></textarea>
+  <div class="bar">
+    <span id="counts" class="meta"></span>
+    <div class="bar-actions">
+      <button type="button" class="btn" id="clearBtn" data-i18n="clear"></button>
+      <button type="button" class="btn" id="exportCsv" disabled>CSV</button>
+      <button type="button" class="btn" id="exportJson" disabled>JSON</button>
+      <button type="button" class="btn primary" id="lookupBtn" disabled data-i18n="lookup"></button>
+    </div>
+  </div>
+  <p class="meta" id="lookupNote"></p>
+
+  <div id="results"></div>
+
+  <section class="sources">
+    <h2 data-i18n="sourcesTitle"></h2>
+    <p class="meta" data-i18n="sourcesIntro"></p>
+    <div id="feedList"></div>
+    <p id="staleWarn" class="notice warn" hidden></p>
+  </section>
+</main>
+
+<dialog id="keysDialog">
+  <form method="dialog">
+    <h2 data-i18n="keysTitle"></h2>
+    <p class="meta" data-i18n="keysIntro"></p>
+    <div id="keyFields"></div>
+    <label class="check"><input type="checkbox" id="rememberKeys"> <span data-i18n="remember"></span></label>
+    <div class="dialog-actions">
+      <button value="cancel" class="btn ghost" data-i18n="cancel"></button>
+      <button value="save" class="btn primary" data-i18n="save"></button>
+    </div>
+  </form>
+</dialog>
+
+<footer class="wrap foot">
+  <p data-i18n="privacy"></p>
+  <p><a href="https://github.com/silexi/ioclookup-web" data-i18n="source"></a></p>
+</footer>
+</body>
+</html>

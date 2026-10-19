@@ -1,0 +1,17 @@
+{
+  // Static site plus a small Worker for /api/p/* (lookup pass-through, see src/worker.js).
+  "name": "ioclookup",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": { "enabled": false },
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"],
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  }
+  // ioclookup.com is currently served by the domain-placeholder Worker; the route moves here on launch.
+}

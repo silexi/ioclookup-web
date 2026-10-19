@@ -1,0 +1,123 @@
+// Lookups with the user's own API keys (BYOK).
+//
+// Each source sends the indicator to a third party, so lookups only run when the user asks.
+// Sources that allow browser requests are called directly. The others go through /api/p/,
+// a pass-through in this site's Worker that forwards the key and stores nothing (src/worker.js).
+//
+// query() returns { status: "listed" | "not_listed" | "error", summary, link }.
+
+const enc = encodeURIComponent;
+const b64url = (s) => btoa(unescape(encodeURIComponent(s))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+async function proxied(provider, path, key, { method = "GET", body, query = "" } = {}) {
+  const r = await fetch(`/api/p/${provider}/${path}${query ? "?" + query : ""}`, {
+    method,
+    headers: { "x-user-key": key, ...(body ? { "content-type": "text/plain" } : {}) },
+    body,
+  });
+  const text = await r.text();
+  let data = null;
+  try { data = JSON.parse(text); } catch { /* not JSON */ }
+  return { ok: r.ok, status: r.status, data };
+}
+
+const err = (msg) => ({ status: "error", summary: msg, link: "" });
+
+export const SOURCES = [
+  {
+    id: "threatfox",
+    name: "abuse.ch ThreatFox",
+    keyLabel: "abuse.ch Auth-Key",
+    keyUrl: "https://auth.abuse.ch/",
+    types: ["ipv4", "domain", "url", "md5", "sha1", "sha256"],
+    proxied: true,
+    async query(ioc, key) {
+      const r = await proxied("threatfox", "", key, { method: "POST", body: JSON.stringify({ query: "search_ioc", search_term: ioc.value, exact_match: true }) });
+      if (!r.ok || !r.data) return err(`HTTP ${r.status}`);
+      if (r.data.query_status === "no_result") return { status: "not_listed", summary: "", link: "" };
+      if (r.data.query_status !== "ok") return err(String(r.data.query_status || r.data.error || "error"));
+      const d = r.data.data || [];
+      const fam = [...new Set(d.map((x) => x.malware_printable).filter(Boolean))].slice(0, 3).join(", ");
+      return { status: "listed", summary: `${d.length} IOC record(s)${fam ? ": " + fam : ""}`, link: d[0] ? `https://threatfox.abuse.ch/ioc/${d[0].id}/` : "" };
+    },
+  },
+  {
+    id: "urlhaus",
+    name: "abuse.ch URLhaus",
+    keyLabel: "abuse.ch Auth-Key",
+    keyUrl: "https://auth.abuse.ch/",
+    sharesKeyWith: "threatfox",
+    types: ["url", "domain", "ipv4", "md5", "sha256"],
+    proxied: true,
+    async query(ioc, key) {
+      const [path, field] = ioc.type === "url" ? ["url", "url"] : ioc.type === "md5" ? ["payload", "md5_hash"] : ioc.type === "sha256" ? ["payload", "sha256_hash"] : ["host", "host"];
+      const r = await proxied("urlhaus", path, key, { method: "POST", body: `${field}=${enc(ioc.value)}` });
+      if (!r.ok || !r.data) return err(`HTTP ${r.status}`);
+      if (r.data.query_status === "no_results") return { status: "not_listed", summary: "", link: "" };
+      if (r.data.query_status !== "ok") return err(String(r.data.query_status));
+      const n = r.data.url_count ?? r.data.urls?.length ?? 1;
+      return { status: "listed", summary: path === "payload" ? `payload seen (${r.data.signature || "no signature"})` : `${n} malicious URL record(s)`, link: r.data.urlhaus_reference || "" };
+    },
+  },
+  {
+    id: "abuseipdb",
+    name: "AbuseIPDB",
+    keyLabel: "AbuseIPDB API key",
+    keyUrl: "https://www.abuseipdb.com/account/api",
+    types: ["ipv4", "ipv6"],
+    proxied: true,
+    async query(ioc, key) {
+      const r = await proxied("abuseipdb", "check", key, { query: `ipAddress=${enc(ioc.value)}&maxAgeInDays=90` });
+      if (!r.ok || !r.data?.data) return err(`HTTP ${r.status}`);
+      const d = r.data.data;
+      const score = d.abuseConfidenceScore ?? 0;
+      return { status: score > 0 || d.totalReports > 0 ? "listed" : "not_listed", summary: `confidence ${score}%, ${d.totalReports ?? 0} reports in 90 days`, link: `https://www.abuseipdb.com/check/${enc(ioc.value)}` };
+    },
+  },
+  {
+    id: "virustotal",
+    name: "VirusTotal",
+    keyLabel: "VirusTotal API key",
+    keyUrl: "https://www.virustotal.com/gui/my-apikey",
+    types: ["ipv4", "ipv6", "domain", "url", "md5", "sha1", "sha256"],
+    proxied: true,
+    minIntervalMs: 15500, // public API: 4 requests per minute
+    async query(ioc, key) {
+      const path = ioc.type.startsWith("ip") ? `ip_addresses/${ioc.value}` : ioc.type === "domain" ? `domains/${ioc.value}` : ioc.type === "url" ? `urls/${b64url(ioc.value)}` : `files/${ioc.value}`;
+      const r = await proxied("virustotal", path, key);
+      if (r.status === 404) return { status: "not_listed", summary: "not in VirusTotal", link: "" };
+      if (!r.ok || !r.data?.data) return err(`HTTP ${r.status}`);
+      const s = r.data.data.attributes?.last_analysis_stats || {};
+      const bad = (s.malicious || 0) + (s.suspicious || 0);
+      const total = Object.values(s).reduce((a, b) => a + b, 0);
+      const gui = ioc.type.startsWith("ip") ? "ip-address" : ioc.type === "domain" ? "domain" : ioc.type === "url" ? "url" : "file";
+      const id = ioc.type === "url" ? r.data.data.id : ioc.value;
+      return { status: bad > 0 ? "listed" : "not_listed", summary: `${bad}/${total} engines flagged`, link: `https://www.virustotal.com/gui/${gui}/${id}` };
+    },
+  },
+  {
+    id: "otx",
+    name: "AlienVault OTX",
+    keyLabel: "OTX API key",
+    keyUrl: "https://otx.alienvault.com/api",
+    types: ["ipv4", "ipv6", "domain", "url", "md5", "sha1", "sha256", "cve"],
+    proxied: false,
+    async query(ioc, key) {
+      const section = { ipv4: "IPv4", ipv6: "IPv6", domain: "domain", url: "url", md5: "file", sha1: "file", sha256: "file", cve: "cve" }[ioc.type];
+      const r = await fetch(`https://otx.alienvault.com/api/v1/indicators/${section}/${enc(ioc.value)}/general`, { headers: { "X-OTX-API-KEY": key } });
+      if (r.status === 404) return { status: "not_listed", summary: "", link: "" };
+      if (!r.ok) return err(`HTTP ${r.status}`);
+      const d = await r.json();
+      const n = d.pulse_info?.count ?? 0;
+      return { status: n > 0 ? "listed" : "not_listed", summary: `${n} pulse(s)`, link: `https://otx.alienvault.com/indicator/${section.toLowerCase()}/${enc(ioc.value)}` };
+    },
+  },
+];
+
+export function sourcesFor(type, keys) {
+  return SOURCES.filter((s) => s.types.includes(type) && keyFor(s, keys));
+}
+
+export function keyFor(source, keys) {
+  return keys[source.id] || (source.sharesKeyWith ? keys[source.sharesKeyWith] : "") || "";
+}
