@@ -33,7 +33,6 @@ const stripUrl = (v) => v.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/\/$/,
 // the indicators are sent there on Look up and only matching entries come back (src/worker.js).
 export const SERVER_SOURCES = [
   { id: "cins", name: "CINS Army", server: true, noKey: true, proxied: true, home: "https://cinsscore.com/", types: ["ipv4"] },
-  { id: "botvrij", name: "Botvrij.eu", server: true, noKey: true, proxied: true, home: "https://www.botvrij.eu/", types: ["ipv4", "ipv6", "domain", "url", "md5", "sha1", "sha256", "email"] },
 ];
 
 export async function matchOnServer(type, values) {

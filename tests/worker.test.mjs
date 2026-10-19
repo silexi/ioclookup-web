@@ -57,13 +57,13 @@ await run("no logging in worker source", async () => {
 
 await run("match returns only matching entries and never serves the private files", async () => {
   assert.equal(fnv1a("a"), 0xe40c292c); // same reference value as the Python builder test
-  const shards = { [`ipv4/${fnv1a("45.9.1.1") % 16}`]: { "45.9.1.1": [["botvrij", "Lazarus"]], "1.1.1.9": [["cins", null]] } };
+  const shards = { [`ipv4/${fnv1a("45.9.1.1") % 16}`]: { "45.9.1.1": [["cins", null]], "1.1.1.9": [["cins", null]] } };
   const assetCalls = [];
   const env = { ASSETS: { fetch: async (r) => { const k = new URL(r.url).pathname.replace(/^\/_private\//, "").replace(/\.json$/, ""); assetCalls.push(k); return k in shards ? Response.json(shards[k]) : new Response("", { status: 404 }); } } };
   const call = (body, headers = {}) => handleMatch(...req("/api/match", { method: "POST", body: JSON.stringify(body), headers }), env);
   let r = await call({ type: "ipv4", values: ["45.9.1.1", "8.8.8.8"] });
   assert.equal(r.status, 200);
-  assert.deepEqual((await r.json()).hits, [{ value: "45.9.1.1", hits: [["botvrij", "Lazarus"]] }]);
+  assert.deepEqual((await r.json()).hits, [{ value: "45.9.1.1", hits: [["cins", null]] }]);
   r = await call({ type: "domain", values: ["EVIL.example"] });
   assert.deepEqual((await r.json()).hits, []);
   assert.equal((await call({ type: "ipv4", values: ["1.1.1.1"] }, { origin: "https://evil.example", "sec-fetch-site": "cross-site" })).status, 403);

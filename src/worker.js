@@ -2,8 +2,8 @@
 //
 // Static files are served by the assets binding. The Worker handles two paths:
 // - /api/p/<provider>/...: a pass-through for lookup APIs that do not allow browser requests (no CORS).
-// - /api/match: matches indicators against lists that may be used but not republished (CINS Army,
-//   Botvrij.eu). Those lists are built into /_private/, which this Worker refuses to serve publicly;
+// - /api/match: matches indicators against lists that may be used but not republished
+//   for now only CINS Army). Those lists are built into /_private/, which this Worker refuses to serve publicly;
 //   only the entries that match the submitted indicators are returned.
 //
 // What the proxy does and does not do:

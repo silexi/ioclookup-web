@@ -102,6 +102,7 @@ FEEDS = [
 # Sources whose terms allow use but say nothing about republishing. They are never published as
 # files: the build writes them under public/_private/, the Worker refuses public requests for that
 # path and answers only /api/match, which returns the matching entries (portfolio S-19, MK-21).
+# Botvrij.eu was evaluated on 2026-10-19 and left out: its lists held about 28 indicators in total.
 PRIVATE_FEEDS = [
     {
         "id": "cins",
@@ -111,16 +112,6 @@ PRIVATE_FEEDS = [
         "home": "https://cinsscore.com/",
         "terms": "\"parse and use in any way you see fit\"",
         "min": 1000,
-    },
-    {
-        # Resale is not allowed: to be removed if the site ever charges (MK-20).
-        "id": "botvrij",
-        "name": "Botvrij.eu",
-        "urls": [f"https://www.botvrij.eu/data/ioclist.{t}" for t in ("ip-dst", "domain", "url", "md5", "sha1", "sha256", "email-src")],
-        "parser": "botvrij",
-        "home": "https://www.botvrij.eu/",
-        "terms": "free to use, no resale",
-        "min": 100,
     },
 ]
 PRIVATE_SHARDS = 16

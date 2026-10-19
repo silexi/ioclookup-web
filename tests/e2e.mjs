@@ -68,13 +68,12 @@ assert.deepEqual(external, []);
 
 // server-side matching: the private lists are never served, only matches come back
 assert.equal((await page.request.get(BASE + "/_private/ipv4/0.json")).status(), 404);
-assert.match(await page.textContent("#lookupNote"), /this site's server \(matched against CINS Army, Botvrij\.eu/);
+assert.match(await page.textContent("#lookupNote"), /this site's server \(matched against CINS Army;/);
 await page.route((u) => !u.href.startsWith(BASE), (r) => r.abort());
 await page.click("#lookupBtn");
 await page.waitForFunction(() => /CINS Army: listed/.test(document.querySelector("#results").textContent));
 const after = await page.$$eval("#results tbody tr", (trs) => trs.map((tr) => tr.textContent));
 assert.match(after.find((x) => x.includes("77.88.0.5")), /CINS Army: listed/);
-assert.match(after.find((x) => x.includes("45.9.1.1")), /Botvrij\.eu: listed \(Lazarus campaign\)/);
 assert.match(after.find((x) => x.includes("185.220.0.5")), /CINS Army: not listed/);
 await page.unroute(() => true);
 
