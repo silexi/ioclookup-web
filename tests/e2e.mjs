@@ -17,7 +17,12 @@ page.on("pageerror", (e) => errors.push(String(e)));
 page.on("request", (r) => { if (!r.url().startsWith(BASE)) external.push(r.url()); });
 
 await page.goto(BASE + "/");
-await page.waitForFunction(() => document.getElementById("feedList").textContent.includes("records"));
+await page.waitForFunction(() => !document.getElementById("examples").hidden);
+// examples are built from the same data, so the firewall example must produce listed results
+await page.click('#exampleBtns button:text("Firewall log")');
+await page.waitForFunction(() => /listed in Tor exit nodes/.test(document.querySelector("#results").textContent));
+assert.match(await page.textContent("#exampleHint"), /Each destination is in a different source/);
+await page.click("#clearBtn");
 await page.fill("#input", "Phish from hxxps://login-microsoft[.]com/auth via 185.220.0.5 and 10.0.0.1, exploit CVE-2024-3400, hash d41d8cd98f00b204e9800998ecf8427e, contact bad@evil.ru, relay 2.1.2.3, dropper bad7.example.com, scanner 77.88.0.5, implant 45.9.1.1");
 await page.waitForFunction(() => document.querySelectorAll("#results tbody tr").length >= 7);
 // feed files for the pasted types load after the first render
@@ -85,6 +90,16 @@ await page.setViewportSize({ width: 375, height: 800 });
 const overflow = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
 assert.ok(overflow <= 0, `overflow ${overflow}`);
 if (OUT) await page.screenshot({ path: `${OUT}/ioc-mobile.png`, fullPage: true });
+
+// sources page
+await page.setViewportSize({ width: 1280, height: 900 });
+await page.goto(BASE + "/sources/");
+await page.waitForFunction(() => /TweetFeed/.test(document.getElementById("sections").textContent));
+const sec = await page.textContent("#sections");
+for (const want of ["Yayımlanan feed'ler", "Bu sitenin sunucusunda eşleştirilenler", "CINS Army", "USOM", "VirusTotal", "PDDL 1.0", "Ticari olmayan"]) assert.ok(sec.includes(want), want);
+await page.click("[data-lang=en]");
+assert.match(await page.textContent("#sections"), /Published feeds.*Matched on this site's server.*Queried from your browser.*With your own key.*Context.*Search links/s);
+if (OUT) await page.screenshot({ path: `${OUT}/ioc-sources.png`, fullPage: true });
 assert.deepEqual(errors.filter((e) => !e.includes("net::ERR_FAILED")), []); // ERR_FAILED: external lookups aborted on purpose
 await browser.close();
 console.log("ok: e2e passed");

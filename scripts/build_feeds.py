@@ -363,6 +363,150 @@ def build_private(out: Path, meta: dict, fetcher) -> None:
     write_private(feeds_data, out)
 
 
+USOM_API = "https://siberguvenlik.gov.tr/api/address/index"
+CLEAN = ["1.1.1.1", "8.8.4.4", "13.107.42.14", "update.microsoft.com"]
+
+
+def defang(v: str) -> str:
+    return v.replace("https://", "hxxps://").replace("http://", "hxxp://").replace(".", "[.]")
+
+
+def public_ip(v: str | None) -> bool:
+    try:
+        return bool(v) and ipaddress.ip_address(v).is_global
+    except ValueError:
+        return False
+
+
+def load_published(out: Path, meta: dict) -> dict:
+    """{feed id: {type: {value: detail}}} read back from the files written (or reused) above."""
+    data = {}
+    for f in meta["feeds"]:
+        for t in f.get("files", {}):
+            try:
+                data.setdefault(f["id"], {})[t] = json.loads((out / f"{f['id']}.{t}.json").read_text(encoding="utf-8"))["v"]
+            except (OSError, ValueError):
+                pass
+    return data
+
+
+def load_private(private_out: Path, t: str) -> dict:
+    merged = {}
+    for shard in sorted((private_out / t).glob("*.json")) if (private_out / t).exists() else []:
+        merged.update(json.loads(shard.read_text(encoding="utf-8")))
+    return merged
+
+
+def build_demo(out: Path, private_out: Path, meta: dict, fetcher) -> dict:
+    """Example texts built from today's data, so every planted indicator is actually listed somewhere.
+    Lines whose indicator is unavailable today are left out."""
+    pub = load_published(out, meta)
+    cins = load_private(private_out, "ipv4")
+
+    def latest(fid, t, n=1, pred=lambda v: True):
+        vals = pub.get(fid, {}).get(t, {})
+        keys = [k for k in vals if pred(k)]
+        if vals and isinstance(next(iter(vals.values()), None), list):  # TweetFeed: newest report first
+            keys.sort(key=lambda k: vals[k][0], reverse=True)
+        return keys[:n]
+
+    def one(*a, **k):
+        r = latest(*a, **k)
+        return r[0] if r else None
+
+    usom_ip = usom_domain = None
+    try:
+        rows = json.loads(fetcher(f"{USOM_API}?type=ip"))["models"]
+        usom_ip = next((r["url"] for r in rows if public_ip(r.get("url"))), None)
+        rows = json.loads(fetcher(f"{USOM_API}?type=domain"))["models"]
+        usom_domain = next((r["url"] for r in rows if r.get("url") and "." in r["url"]), None)
+    except Exception as e:  # noqa: BLE001  the demo still works without USOM lines
+        meta["errors"].append({"feed": "demo-usom", "error": str(e)[:200], "at": now()})
+
+    kev = pub.get("kev", {}).get("cve", {})
+    cves = sorted(kev, key=lambda c: kev[c]["added"], reverse=True)[:2]
+    c2ips = latest("c2intel", "ipv4", 2, public_ip)
+    tf_url = one("tweetfeed", "url", pred=lambda u: u.startswith("http") and len(u) < 90)
+    tf_domain = one("tweetfeed", "domain")
+    values = {
+        "tor": one("tor-exit", "ipv4", pred=public_ip), "et": one("et-compromised", "ipv4", pred=public_ip),
+        "c2ip": c2ips[0] if c2ips else None, "c2ip2": c2ips[1] if len(c2ips) > 1 else None,
+        "cins": next((v for v in sorted(cins) if public_ip(v)), None), "usom_ip": usom_ip, "usom_domain": usom_domain,
+        "tf_ip": one("tweetfeed", "ipv4", pred=public_ip), "tf_domain": tf_domain, "tf_url": tf_url,
+        "tf_sha256": one("tweetfeed", "sha256"), "tf_md5": one("tweetfeed", "md5"),
+        "c2domain": one("c2intel", "domain"), "certpl": one("cert-pl", "domain"),
+        "cve1": cves[0] if cves else None, "cve2": cves[1] if len(cves) > 1 else None,
+    }
+
+    def lines(rows):
+        """rows: (template, keys used). A row is kept only if all its values exist."""
+        kept = []
+        for tpl, keys in rows:
+            if all(values.get(k) for k in keys):
+                kept.append(tpl.format(**{k: values[k] for k in keys}, **{f"{k}_d": defang(values[k]) for k in keys}))
+        return "\n".join(kept)
+
+    listed = set()
+    for fid, types in pub.items():
+        for vals in types.values():
+            listed.update(vals)
+    listed.update(cins)
+    clean = [v for v in CLEAN if v not in listed]
+
+    scenarios = [
+        {
+            "id": "firewall",
+            "title": {"en": "Firewall log", "tr": "Firewall logu"},
+            "hint": {"en": "Each destination is in a different source. Private source addresses are not sent anywhere.",
+                     "tr": "Her hedef adres farklı bir kaynakta. Özel kaynak adresleri hiçbir yere gönderilmez."},
+            "text": "Firewall deny summary, last hour\n" + lines([
+                ("src=10.20.1.15 dst={tor} dport=443 action=deny", ["tor"]),
+                ("src=10.20.1.15 dst={et} dport=8443 action=deny", ["et"]),
+                ("src=10.20.4.77 dst={c2ip} dport=443 action=deny", ["c2ip"]),
+                ("src=10.20.4.77 dst={cins} dport=22 action=deny", ["cins"]),
+                ("src=10.20.4.77 dst={usom_ip} dport=80 action=deny", ["usom_ip"]),
+                ("src=10.20.9.3 dst=8.8.8.8 dport=53 action=allow", []),
+            ]),
+        },
+        {
+            "id": "phishing",
+            "title": {"en": "Phishing e-mail", "tr": "Oltalama e-postası"},
+            "hint": {"en": "Defanged addresses are read as normal. Press Look up to see the USOM result.",
+                     "tr": "Defang edilmiş adresler normal okunur. USOM sonucu için Sorgula'ya basın."},
+            "text": lines([
+                ('From: "Müşteri Hizmetleri" <bilgi@{usom_domain_d}>', ["usom_domain"]),
+                ("Reply-To: destek@{tf_domain_d}", ["tf_domain"]),
+                ("Subject: Hesabınızda işlem bekliyor", []),
+                ("", []),
+                ("Hesabınızın kapanmaması için {tf_url_d} adresinden doğrulama yapın.", ["tf_url"]),
+                ("Alternatif bağlantı: {certpl_d}", ["certpl"]),
+            ]),
+        },
+        {
+            "id": "report",
+            "title": {"en": "Threat report", "tr": "Tehdit raporu"},
+            "hint": {"en": "Mixed CVEs, hashes, IPs and a domain. Try the hunting queries below the results.",
+                     "tr": "CVE, hash, IP ve alan adı karışık. Sonuçların altındaki arama sorgularını deneyin."},
+            "text": lines([
+                ("The actor gained initial access through {cve1} and {cve2}.", ["cve1", "cve2"]),
+                ("Beacons called back to {c2ip2} and {tf_ip}; the C2 domain was {c2domain_d}.", ["c2ip2", "tf_ip", "c2domain"]),
+                ("Second stage SHA256: {tf_sha256}", ["tf_sha256"]),
+                ("Loader MD5: {tf_md5}", ["tf_md5"]),
+            ]),
+        },
+        {
+            "id": "clean",
+            "title": {"en": "Clean traffic", "tr": "Temiz trafik"},
+            "hint": {"en": "Nothing here should be listed. Public addresses still get AS and InternetDB context.",
+                     "tr": "Burada hiçbir şey listede çıkmamalı. Açık adresler yine de AS ve InternetDB bilgisi alır."},
+            "text": "Resolvers and CDN seen today: " + ", ".join(clean + ["192.168.1.10"]),
+        },
+    ]
+    demo = {"generated": now(), "scenarios": [x for x in scenarios if x["text"].strip()]}
+    (out / "demo.json").write_text(json.dumps(demo, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    return demo
+
+
 def by_type(f: dict, raws: list[bytes]) -> dict:
     texts = [r.decode("utf-8", "replace") for r in raws]
     p = f["parser"]
@@ -448,7 +592,9 @@ def build(out: Path, fetcher=fetch, private_out: Path | None = None) -> dict:
     # octets lists which shard files exist, so the browser never requests a missing one
     meta["asn"].update({"fetched": now(), "ranges": len(rows), "octets": octets})
     print(f"asn: {len(rows)} ranges in {len(octets)} files", file=sys.stderr)
-    build_private(private_out or out / "_private", meta, fetcher)
+    private_out = private_out or out / "_private"
+    build_private(private_out, meta, fetcher)
+    build_demo(out, private_out, meta, fetcher)
     (out / "meta.json").write_text(json.dumps(meta, indent=1) + "\n", encoding="utf-8")
     return meta
 

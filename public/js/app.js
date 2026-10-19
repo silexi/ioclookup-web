@@ -20,18 +20,16 @@ const T = {
     noLocal: (names) => `not in ${names}`, noFeed: "no published feed for this type", inFeed: "listed in",
     listed: "listed", notListed: "not listed", error: "error", pending: "waiting", running: "querying", skipped: "not sent (private address)",
     notClean: "Not being listed is not the same as being safe. It only means these sources have no record.",
-    sourcesTitle: "Sources", sourcesIntro: "Published feeds are downloaded once a day and matched in your browser. Only feeds whose license allows redistribution are published. Other services are queried with your own key, only when you ask.",
-    feedLine: (f) => `${f.name}: ${f.count.toLocaleString("en-US")} records, license ${f.license}`,
-    updated: "updated", stale: (h) => `Feed data is ${h} hours old. The list shows the last successful update.`,
+    sourcesTitle: "Sources",
+    updated: "updated", stale: (h) => `Some feed data is ${h} hours old because a source failed; see Sources for details.`,
     keysTitle: "API keys", keysIntro: "Keys stay in this browser. Services that do not accept browser requests are reached through this site's pass-through, which forwards the key and stores nothing (source code linked below).",
     remember: "Remember keys in this browser (otherwise they are forgotten when the tab closes)", cancel: "Cancel", save: "Save", getKey: "get a key",
-    viaProxy: "via this site's pass-through", direct: "directly from your browser",
     asn: (a) => `AS${a.asn} ${a.name}${a.country ? " · " + a.country : ""}`, open: "Open in:",
     huntTitle: "Hunting queries", huntIntro: (d) => `Search your own logs for these indicators over the last ${d} days. Field and table names follow each platform's common schema; adjust them to your environment.`,
     huntSplunk: "Run each search on its own.", huntSkipped: (n) => `${n} private or reserved address(es) left out.`, huntNone: "No indicators that can be searched for in logs.",
+    examples: "Try an example:",
     copy: "Copy", copied: "Copied", days: "Days", privateAddr: "private or reserved address",
     serverMatch: (names) => `this site's server (matched against ${names}; only matches come back, nothing is stored)`,
-    serverLine: (n) => `${n} records, matched on this site's server when you press Look up; the list itself is not published`,
     source: "Source code", loadError: "Feed data could not be loaded. Extraction still works.",
   },
   tr: {
@@ -44,18 +42,16 @@ const T = {
     noLocal: (names) => `${names} içinde yok`, noFeed: "bu tür için yayımlanan feed yok", inFeed: "listede:",
     listed: "listede", notListed: "listede yok", error: "hata", pending: "bekliyor", running: "sorgulanıyor", skipped: "gönderilmedi (özel adres)",
     notClean: "Listede olmamak güvenli olmak demek değildir. Yalnızca bu kaynaklarda kayıt olmadığını gösterir.",
-    sourcesTitle: "Kaynaklar", sourcesIntro: "Yayımlanan feed'ler günde bir kez indirilir ve tarayıcınızda eşleştirilir. Yalnızca lisansı yeniden dağıtıma izin veren feed'ler yayımlanır. Diğer servisler, siz istediğinizde, kendi anahtarınızla sorgulanır.",
-    feedLine: (f) => `${f.name}: ${f.count.toLocaleString("tr-TR")} kayıt, lisans ${f.license}`,
-    updated: "güncelleme", stale: (h) => `Feed verisi ${h} saatlik. Liste son başarılı güncellemeyi gösteriyor.`,
+    sourcesTitle: "Kaynaklar",
+    updated: "güncelleme", stale: (h) => `Bir kaynak hata verdiği için bazı feed verileri ${h} saatlik; ayrıntı Kaynaklar sayfasında.`,
     keysTitle: "API anahtarları", keysIntro: "Anahtarlar bu tarayıcıda kalır. Tarayıcıdan gelen isteği kabul etmeyen servislere bu sitenin aktarıcısı üzerinden gidilir; aktarıcı anahtarı iletir, hiçbir şey saklamaz (kaynak kodu aşağıda).",
     remember: "Anahtarları bu tarayıcıda hatırla (aksi halde sekme kapanınca silinir)", cancel: "İptal", save: "Kaydet", getKey: "anahtar al",
-    viaProxy: "bu sitenin aktarıcısı üzerinden", direct: "doğrudan tarayıcınızdan",
     asn: (a) => `AS${a.asn} ${a.name}${a.country ? " · " + a.country : ""}`, open: "Aç:",
     huntTitle: "Arama sorguları", huntIntro: (d) => `Bu göstergeleri son ${d} gündeki kendi loglarınızda arayın. Tablo ve alan adları her platformun ortak şemasına göre; ortamınıza göre düzenleyin.`,
     huntSplunk: "Her aramayı ayrı çalıştırın.", huntSkipped: (n) => `${n} özel ya da ayrılmış adres dışarıda bırakıldı.`, huntNone: "Loglarda aranabilecek gösterge yok.",
+    examples: "Örnek deneyin:",
     copy: "Kopyala", copied: "Kopyalandı", days: "Gün", privateAddr: "özel ya da ayrılmış adres",
     serverMatch: (names) => `bu sitenin sunucusu (${names} ile eşleştirilir; yalnızca eşleşenler döner, hiçbir şey saklanmaz)`,
-    serverLine: (n) => `${n} kayıt, "Sorgula"ya basınca bu sitenin sunucusunda eşleştirilir; listenin kendisi yayımlanmaz`,
     source: "Kaynak kodu", loadError: "Feed verisi yüklenemedi. Gösterge çıkarma yine çalışır.",
   },
 };
@@ -252,40 +248,33 @@ function rows() {
 }
 const csvCell = (v) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
 
+let demo = null;
+
 function renderSources() {
-  const box = $("feedList");
-  box.textContent = "";
   if (!db) return;
-  const ul = el("ul");
-  if (db.meta.asn) {
-    const m = db.meta.asn;
-    const li = el("li", "", `AS: ${m.ranges.toLocaleString(lang === "tr" ? "tr-TR" : "en-US")} IPv4 ranges, license ${m.license} · `);
-    const a = el("a", "", m.attribution); a.href = m.home; a.rel = "noopener"; li.append(a);
-    li.append(el("span", "meta", ` · ${t("updated")} ${new Date(m.fetched).toISOString().slice(0, 16).replace("T", " ")} UTC`));
-    ul.append(li);
-  }
-  for (const f of db.meta.feeds) {
-    const li = el("li", "", t("feedLine", f) + " · ");
-    const a = el("a", "", f.attribution); a.href = f.home; a.rel = "noopener"; li.append(a);
-    li.append(el("span", "meta", ` · ${t("updated")} ${new Date(f.fetched).toISOString().slice(0, 16).replace("T", " ")} UTC`));
-    ul.append(li);
-  }
-  for (const p of db.meta.private || []) {
-    const li = el("li", "", `${p.name}: ${t("serverLine", p.count.toLocaleString(lang === "tr" ? "tr-TR" : "en-US"))} · `);
-    const a = el("a", "", p.name); a.href = p.home; a.rel = "noopener"; li.append(a);
-    li.append(el("span", "meta", ` · ${t("updated")} ${new Date(p.fetched).toISOString().slice(0, 16).replace("T", " ")} UTC`));
-    ul.append(li);
-  }
-  for (const s of SOURCES) {
-    const li = el("li", "", `${s.name}: ${s.proxied ? t("viaProxy") : t("direct")}`);
-    ul.append(li);
-  }
-  box.append(ul);
   // A feed whose source failed keeps its last copy and its own fetch time, so warn on the oldest one.
   const oldest = Math.min(...db.meta.feeds.map((f) => new Date(f.fetched).getTime()));
   const h = Math.floor((Date.now() - oldest) / 3600000);
   $("staleWarn").hidden = h < STALE_HOURS;
   $("staleWarn").textContent = t("stale", h);
+}
+
+function renderExamples() {
+  const box = $("exampleBtns");
+  box.textContent = "";
+  $("examples").hidden = !demo?.scenarios?.length;
+  for (const sc of demo?.scenarios || []) {
+    const b = el("button", "", sc.title[lang] || sc.title.en); b.type = "button";
+    b.addEventListener("click", () => {
+      $("input").value = sc.text;
+      lookups = new Map();
+      $("exampleHint").hidden = false;
+      $("exampleHint").textContent = sc.hint[lang] || sc.hint.en;
+      scan();
+      $("input").scrollIntoView({ block: "nearest" });
+    });
+    box.append(b);
+  }
 }
 
 function openKeys() {
@@ -325,12 +314,13 @@ function applyLang(l) {
   $("input").placeholder = lang === "tr" ? "Örnek: hxxps://login-microsoft[.]com/auth 185.220.101.4 CVE-2024-3400" : "Example: hxxps://login-microsoft[.]com/auth 185.220.101.4 CVE-2024-3400";
   render();
   renderSources();
+  renderExamples();
 }
 
 for (const b of document.querySelectorAll("[data-lang]")) b.addEventListener("click", () => { try { localStorage.setItem(LANG, b.dataset.lang); } catch {} applyLang(b.dataset.lang); });
 $("keysBtn").addEventListener("click", openKeys);
 $("lookupBtn").addEventListener("click", lookupAll);
-$("clearBtn").addEventListener("click", () => { $("input").value = ""; lookups = new Map(); asnInfo = new Map(); scan(); });
+$("clearBtn").addEventListener("click", () => { $("input").value = ""; $("exampleHint").hidden = true; lookups = new Map(); asnInfo = new Map(); scan(); });
 $("exportJson").addEventListener("click", () => download("iocs.json", JSON.stringify(rows(), null, 2), "application/json"));
 $("exportCsv").addEventListener("click", () => download("iocs.csv", ["type,value,asn,feeds,lookups", ...rows().map((r) => [r.type, r.value, r.asn, r.feeds, r.lookups].map(csvCell).join(","))].join("\n") + "\n", "text/csv"));
 for (const p of PLATFORMS) {
@@ -344,8 +334,9 @@ $("huntCopy").addEventListener("click", async () => {
   $("huntCopy").textContent = t("copied"); setTimeout(() => { $("huntCopy").textContent = t("copy"); }, 1500);
 });
 let timer = 0;
-$("input").addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(scan, 150); });
+$("input").addEventListener("input", (e) => { if (e.isTrusted) $("exampleHint").hidden = true; clearTimeout(timer); timer = setTimeout(scan, 150); });
 
 const saved = (() => { try { return localStorage.getItem(LANG); } catch { return null; } })();
 applyLang(saved || ((navigator.language || "").toLowerCase().startsWith("tr") ? "tr" : "en"));
-loadFeeds("/data/").then((d) => { db = d; scan(); renderSources(); }).catch(() => { $("feedList").textContent = t("loadError"); });
+loadFeeds("/data/").then((d) => { db = d; scan(); renderSources(); }).catch(() => { $("staleWarn").hidden = false; $("staleWarn").textContent = t("loadError"); });
+fetch("/data/demo.json", { cache: "no-cache" }).then((r) => (r.ok ? r.json() : null)).then((d) => { demo = d; renderExamples(); }).catch(() => {});

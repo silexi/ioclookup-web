@@ -14,6 +14,7 @@
   <div class="wrap row">
     <a class="brand" href="/">IOC Lookup</a>
     <div class="actions">
+      <a class="navlink" href="/sources/" data-i18n="sourcesTitle"></a>
       <div class="lang" role="group" aria-label="Language">
         <button type="button" data-lang="en">EN</button>
         <button type="button" data-lang="tr">TR</button>
@@ -25,6 +26,11 @@
 
 <main class="wrap">
   <p class="lead" data-i18n="lead"></p>
+  <div class="examples" id="examples" hidden>
+    <span class="meta" data-i18n="examples"></span>
+    <div class="tabs" id="exampleBtns"></div>
+  </div>
+  <p class="meta" id="exampleHint" hidden></p>
   <label class="sr" for="input" data-i18n="inputLabel"></label>
   <textarea id="input" spellcheck="false" autocomplete="off"></textarea>
   <div class="bar">
@@ -54,12 +60,7 @@
     </div>
   </section>
 
-  <section class="sources">
-    <h2 data-i18n="sourcesTitle"></h2>
-    <p class="meta" data-i18n="sourcesIntro"></p>
-    <div id="feedList"></div>
-    <p id="staleWarn" class="notice warn" hidden></p>
-  </section>
+  <p id="staleWarn" class="notice warn" hidden></p>
 </main>
 
 <dialog id="keysDialog">

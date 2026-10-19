@@ -32,6 +32,9 @@ def fake_fetcher(sizes):
             return ("\n".join(f"phish{i}.example.pl" for i in range(sizes.get("certpl", 1200)))).encode()
         if "cinsscore" in url:
             return ("---\n" + "\n".join(f"77.88.{i // 250}.{i % 250 + 1}" for i in range(1100)) + "\n---\n").encode()
+        if "siberguvenlik" in url:
+            rows = [{"url": "10.0.0.9"}, {"url": "91.92.241.101"}] if "type=ip" in url else [{"url": "kampanya-ornek.cfd"}]
+            return json.dumps({"models": rows}).encode()
         if "kev" in url:
             return json.dumps({"vulnerabilities": [{"cveID": f"cve-2024-{i:05}", "vendorProject": "V", "product": "P",
                                                     "vulnerabilityName": "N", "dateAdded": "2024-01-01",
@@ -100,6 +103,35 @@ class T(unittest.TestCase):
                              {"ipv4": {"45.9.1.1": "Lazarus"}, "domain": {"evil.example": None},
                               "url": {"http://e.example/a": None}, "sha256": {"a" * 64: None}})
             self.assertEqual(B.fnv1a("a"), 0xE40C292C)  # FNV-1a 32-bit reference value
+
+    def test_demo_uses_todays_data(self):
+        with tempfile.TemporaryDirectory() as d:
+            B.build(Path(d, "data"), fake_fetcher({"tor": 400, "et": 60, "kev": 1200}), private_out=Path(d, "_private"))
+            demo = {x["id"]: x for x in json.loads(Path(d, "data", "demo.json").read_text())["scenarios"]}
+            self.assertEqual(list(demo), ["firewall", "phishing", "report", "clean"])
+            fw = demo["firewall"]["text"]
+            self.assertIn("dst=185.220.0.1 ", fw)          # Tor
+            self.assertIn("dst=91.92.241.101 ", fw)        # USOM, the private 10.0.0.9 row is skipped
+            self.assertIn("dst=77.88.0.1 ", fw)            # CINS (server side)
+            self.assertIn("kampanya-ornek[.]cfd", demo["phishing"]["text"])
+            self.assertIn("hxxps://bad[.]example[.]com/x", demo["phishing"]["text"])
+            self.assertNotIn("{", demo["report"]["text"])
+            self.assertTrue(demo["report"]["text"].startswith("The actor gained initial access through CVE-"))
+            self.assertIn("1.1.1.1", demo["clean"]["text"])
+
+    def test_demo_without_usom(self):
+        base = fake_fetcher({"tor": 400, "et": 60, "kev": 1200})
+
+        def f(url):
+            if "siberguvenlik" in url:
+                raise OSError("down")
+            return base(url)
+        with tempfile.TemporaryDirectory() as d:
+            meta = B.build(Path(d, "data"), f, private_out=Path(d, "_private"))
+            demo = json.loads(Path(d, "data", "demo.json").read_text())["scenarios"]
+            self.assertNotIn("91.92.241.101", demo[0]["text"])
+            self.assertTrue(demo[1]["text"].startswith("Reply-To:"))
+            self.assertIn("demo-usom", [e["feed"] for e in meta["errors"]])
 
     def test_short_feed_is_reported_and_live_copy_reused(self):
         live = {"feeds": [{"id": "tor-exit", "name": "Tor exit nodes", "fetched": "2026-10-18T00:00:00Z", "count": 1, "files": {"ipv4": 1}}]}

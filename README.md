@@ -19,6 +19,12 @@ Paste text, get the indicators of compromise in it, and check them. Extraction a
 
 Keys are kept in the browser: in `sessionStorage` by default, in `localStorage` only if you tick "remember".
 
+The [sources page](https://ioclookup.com/sources/) lists every source with its terms and last update, built from `data/meta.json`.
+
+## Examples
+
+`scripts/build_feeds.py` writes `data/demo.json` on every build: a firewall log, a phishing e-mail, a threat report and a clean-traffic control, filled with indicators picked from that day's data (and the USOM API), so each planted indicator is actually listed somewhere. The page shows them as "Try an example" buttons.
+
 ## Published feeds
 
 Only feeds whose license allows public redistribution are published. Each feed is split into one file per indicator type (`data/<feed>.<type>.json`), and the browser downloads only the types that appear in the pasted text. `data/meta.json` records each feed's source, license and fetch time.
