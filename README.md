@@ -39,3 +39,9 @@ python3 scripts/build_feeds.py    # real snapshots
 ```
 
 Deploy needs the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets.
+
+## License
+
+Copyright (c) 2026 Bartu Kılıç. All rights reserved.
+
+The source is public so that what the page and the pass-through do can be checked. No license to copy, modify or redistribute the code is granted. Feed snapshots under `data/` keep the license of their source, listed above and in `data/meta.json`.
