@@ -30,6 +30,13 @@ def fake_fetcher(sizes):
             return b"#domain,ioc\nc2.example.net,Possible Cobalt Strike C2 Domain\n"
         if "hole.cert.pl" in url:
             return ("\n".join(f"phish{i}.example.pl" for i in range(sizes.get("certpl", 1200)))).encode()
+        if "cinsscore" in url:
+            return ("---\n" + "\n".join(f"77.88.{i // 250}.{i % 250 + 1}" for i in range(1100)) + "\n---\n").encode()
+        if "botvrij" in url:
+            kind = url.rsplit(".", 1)[-1]
+            body = {"ip-dst": "# comment\n45.9.1.1 # Lazarus campaign\n", "domain": "evil-botvrij.example # phishing kit\n",
+                    "url": "http://evil-botvrij.example/a # dropper\n", "md5": "", "sha1": "", "sha256": "", "email-src": "x@evil-botvrij.example\n"}
+            return (body[kind] + "\n".join(f"botvrij{i}.example # filler" for i in range(100 if kind == "domain" else 0))).encode()
         if "kev" in url:
             return json.dumps({"vulnerabilities": [{"cveID": f"cve-2024-{i:05}", "vendorProject": "V", "product": "P",
                                                     "vulnerabilityName": "N", "dateAdded": "2024-01-01",
@@ -85,6 +92,18 @@ class T(unittest.TestCase):
             self.assertEqual(two["s"][0], 2 << 24)
             self.assertEqual(two["names"]["65000"], ["CROSSING", "DE"])
             self.assertNotIn("0", one["names"])
+
+    def test_private_feeds_are_sharded_outside_data(self):
+        with tempfile.TemporaryDirectory() as d:
+            meta = B.build(Path(d, "data"), fake_fetcher({"tor": 400, "et": 60, "kev": 1200}), private_out=Path(d, "_private"))
+            self.assertEqual([p["id"] for p in meta["private"]], ["cins", "botvrij"])
+            self.assertFalse(any(Path(d, "data").glob("cins*")))
+            v = "45.9.1.1"
+            shard = json.loads(Path(d, "_private", "ipv4", f"{B.fnv1a(v) % 16}.json").read_text())
+            self.assertEqual(shard[v], [["botvrij", "Lazarus campaign"]])
+            dom = json.loads(Path(d, "_private", "domain", f"{B.fnv1a('evil-botvrij.example') % 16}.json").read_text())
+            self.assertEqual(dom["evil-botvrij.example"], [["botvrij", "phishing kit"]])
+            self.assertEqual(B.fnv1a("a"), 0xE40C292C)  # FNV-1a 32-bit reference value
 
     def test_short_feed_is_reported_and_live_copy_reused(self):
         live = {"feeds": [{"id": "tor-exit", "name": "Tor exit nodes", "fetched": "2026-10-18T00:00:00Z", "count": 1, "files": {"ipv4": 1}}]}

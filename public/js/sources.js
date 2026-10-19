@@ -29,6 +29,19 @@ const err = (msg) => ({ status: "error", summary: msg, link: "" });
 const USOM_DESC = { PH: "phishing", BP: "banking phishing", MD: "malware distribution domain", MI: "malware distribution IP", MU: "malware distribution URL", MC: "malware command and control", SA: "attack source (scanning, brute force)" };
 const stripUrl = (v) => v.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/\/$/, "").toLowerCase();
 
+// Lists that may be used but not republished. They are matched by this site's Worker (/api/match):
+// the indicators are sent there on Look up and only matching entries come back (src/worker.js).
+export const SERVER_SOURCES = [
+  { id: "cins", name: "CINS Army", server: true, noKey: true, proxied: true, home: "https://cinsscore.com/", types: ["ipv4"] },
+  { id: "botvrij", name: "Botvrij.eu", server: true, noKey: true, proxied: true, home: "https://www.botvrij.eu/", types: ["ipv4", "ipv6", "domain", "url", "md5", "sha1", "sha256", "email"] },
+];
+
+export async function matchOnServer(type, values) {
+  const r = await fetch("/api/match", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type, values }) });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return (await r.json()).hits; // [{ value, hits: [[source id, detail], ...] }]
+}
+
 export const SOURCES = [
   {
     // Türkiye's national CERT list (Siber Güvenlik Başkanlığı, formerly USOM). Its public API accepts

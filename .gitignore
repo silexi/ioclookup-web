@@ -2,3 +2,4 @@ node_modules/
 public/data/
 .wrangler/
 __pycache__/
+public/_private/

@@ -18,7 +18,7 @@ page.on("request", (r) => { if (!r.url().startsWith(BASE)) external.push(r.url()
 
 await page.goto(BASE + "/");
 await page.waitForFunction(() => document.getElementById("feedList").textContent.includes("records"));
-await page.fill("#input", "Phish from hxxps://login-microsoft[.]com/auth via 185.220.0.5 and 10.0.0.1, exploit CVE-2024-3400, hash d41d8cd98f00b204e9800998ecf8427e, contact bad@evil.ru, relay 2.1.2.3, dropper bad7.example.com");
+await page.fill("#input", "Phish from hxxps://login-microsoft[.]com/auth via 185.220.0.5 and 10.0.0.1, exploit CVE-2024-3400, hash d41d8cd98f00b204e9800998ecf8427e, contact bad@evil.ru, relay 2.1.2.3, dropper bad7.example.com, scanner 77.88.0.5, implant 45.9.1.1");
 await page.waitForFunction(() => document.querySelectorAll("#results tbody tr").length >= 7);
 // feed files for the pasted types load after the first render
 await page.waitForFunction(() => /listed in Tor exit nodes/.test(document.querySelector("#results").textContent) && /PAN-OS/.test(document.querySelector("#results").textContent));
@@ -66,6 +66,18 @@ assert.match(await page.textContent("#lookupNote"), /AlienVault OTX/);
 // nothing left the page before an explicit lookup
 assert.deepEqual(external, []);
 
+// server-side matching: the private lists are never served, only matches come back
+assert.equal((await page.request.get(BASE + "/_private/ipv4/0.json")).status(), 404);
+assert.match(await page.textContent("#lookupNote"), /this site's server \(matched against CINS Army, Botvrij\.eu/);
+await page.route((u) => !u.href.startsWith(BASE), (r) => r.abort());
+await page.click("#lookupBtn");
+await page.waitForFunction(() => /CINS Army: listed/.test(document.querySelector("#results").textContent));
+const after = await page.$$eval("#results tbody tr", (trs) => trs.map((tr) => tr.textContent));
+assert.match(after.find((x) => x.includes("77.88.0.5")), /CINS Army: listed/);
+assert.match(after.find((x) => x.includes("45.9.1.1")), /Botvrij\.eu: listed \(Lazarus campaign\)/);
+assert.match(after.find((x) => x.includes("185.220.0.5")), /CINS Army: not listed/);
+await page.unroute(() => true);
+
 await page.click("[data-lang=tr]");
 assert.match(await page.textContent("#lookupBtn"), /Sorgula/);
 assert.match(await page.textContent("#hunt h2"), /Arama sorguları/);
@@ -74,6 +86,6 @@ await page.setViewportSize({ width: 375, height: 800 });
 const overflow = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
 assert.ok(overflow <= 0, `overflow ${overflow}`);
 if (OUT) await page.screenshot({ path: `${OUT}/ioc-mobile.png`, fullPage: true });
-assert.deepEqual(errors, []);
+assert.deepEqual(errors.filter((e) => !e.includes("net::ERR_FAILED")), []); // ERR_FAILED: external lookups aborted on purpose
 await browser.close();
 console.log("ok: e2e passed");

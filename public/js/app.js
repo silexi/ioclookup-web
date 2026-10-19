@@ -1,6 +1,6 @@
 import { extract, isNonRoutableIPv4 } from "./extract.js";
 import { loadFeeds, ensureTypes, feedsForType, matchLocal } from "./match.js";
-import { SOURCES, sourcesFor, keyFor } from "./sources.js";
+import { SOURCES, SERVER_SOURCES, sourcesFor, keyFor, matchOnServer } from "./sources.js";
 import { PLATFORMS, buildQuery } from "./queries.js";
 import { pivotsFor } from "./pivots.js";
 import { asnFor } from "./asn.js";
@@ -30,6 +30,8 @@ const T = {
     huntTitle: "Hunting queries", huntIntro: (d) => `Search your own logs for these indicators over the last ${d} days. Field and table names follow each platform's common schema; adjust them to your environment.`,
     huntSplunk: "Run each search on its own.", huntSkipped: (n) => `${n} private or reserved address(es) left out.`, huntNone: "No indicators that can be searched for in logs.",
     copy: "Copy", copied: "Copied", days: "Days", privateAddr: "private or reserved address",
+    serverMatch: (names) => `this site's server (matched against ${names}; only matches come back, nothing is stored)`,
+    serverLine: (n) => `${n} records, matched on this site's server when you press Look up; the list itself is not published`,
     source: "Source code", loadError: "Feed data could not be loaded. Extraction still works.",
   },
   tr: {
@@ -52,6 +54,8 @@ const T = {
     huntTitle: "Arama sorguları", huntIntro: (d) => `Bu göstergeleri son ${d} gündeki kendi loglarınızda arayın. Tablo ve alan adları her platformun ortak şemasına göre; ortamınıza göre düzenleyin.`,
     huntSplunk: "Her aramayı ayrı çalıştırın.", huntSkipped: (n) => `${n} özel ya da ayrılmış adres dışarıda bırakıldı.`, huntNone: "Loglarda aranabilecek gösterge yok.",
     copy: "Kopyala", copied: "Kopyalandı", days: "Gün", privateAddr: "özel ya da ayrılmış adres",
+    serverMatch: (names) => `bu sitenin sunucusu (${names} ile eşleştirilir; yalnızca eşleşenler döner, hiçbir şey saklanmaz)`,
+    serverLine: (n) => `${n} kayıt, "Sorgula"ya basınca bu sitenin sunucusunda eşleştirilir; listenin kendisi yayımlanmaz`,
     source: "Kaynak kodu", loadError: "Feed verisi yüklenemedi. Gösterge çıkarma yine çalışır.",
   },
 };
@@ -61,6 +65,9 @@ const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
 
 let db = null;
+// Server-matched lists that the last build actually produced (data/meta.json "private").
+const serverSources = () => SERVER_SOURCES.filter((s) => db?.meta?.private?.some((p) => p.id === s.id));
+const sourcesForIoc = (type) => [...serverSources().filter((s) => s.types.includes(type)), ...sourcesFor(type, keys)];
 let asnInfo = new Map(); // ip -> { asn, name, country } | null
 let huntPlatform = "kql";
 let huntDays = 30;
@@ -101,10 +108,12 @@ function render() {
   for (const i of iocs) by[i.type] = (by[i.type] || 0) + 1;
   $("counts").textContent = t("counts", iocs.length, Object.entries(by).map(([k, v]) => `${v} ${k}`).join(", "));
   for (const id of ["exportCsv", "exportJson"]) $(id).disabled = !iocs.length;
-  const usable = SOURCES.filter((s) => s.noKey || keyFor(s, keys));
+  const usable = [...serverSources(), ...SOURCES.filter((s) => s.noKey || keyFor(s, keys))];
   $("lookupBtn").disabled = !iocs.length || !usable.length;
   const keyed = usable.some((s) => !s.noKey);
-  $("lookupNote").textContent = t("lookupNote", [...new Set(usable.map((s) => s.name))].join(", ")) + (keyed ? "" : " " + t("noKeys"));
+  const srv = serverSources();
+  const names = [...(srv.length ? [t("serverMatch", srv.map((s) => s.name).join(", "))] : []), ...new Set(usable.filter((s) => !s.server).map((s) => s.name))];
+  $("lookupNote").textContent = t("lookupNote", names.join(", ")) + (keyed ? "" : " " + t("noKeys"));
   renderHunt();
 
   const box = $("results");
@@ -146,7 +155,7 @@ function render() {
     }
     tr.append(loc);
     const ext = el("td");
-    for (const s of sourcesFor(ioc.type, keys)) {
+    for (const s of sourcesForIoc(ioc.type)) {
       const r = lookups.get(`${s.id}|${ioc.type}|${ioc.value}`);
       if (!r) continue;
       const line = el("div", `ext ${r.status}`);
@@ -177,8 +186,37 @@ function renderHunt() {
   $("huntNote").textContent = [huntPlatform === "spl" && text ? t("huntSplunk") : "", skipped ? t("huntSkipped", skipped) : ""].filter(Boolean).join(" ");
 }
 
+async function lookupServer() {
+  const byType = {};
+  for (const i of iocs) {
+    if (i.type === "ipv4" && isNonRoutableIPv4(i.value)) continue;
+    if (serverSources().some((s) => s.types.includes(i.type))) (byType[i.type] ||= []).push(i.value);
+  }
+  for (const [type, values] of Object.entries(byType)) {
+    const srcs = serverSources().filter((s) => s.types.includes(type));
+    for (const v of values) for (const s of srcs) lookups.set(`${s.id}|${type}|${v}`, { status: "running", summary: "", link: "" });
+    render();
+    try {
+      const found = new Map();
+      for (let k = 0; k < values.length; k += 1000) for (const h of await matchOnServer(type, values.slice(k, k + 1000))) found.set(h.value, h.hits);
+      for (const v of values) {
+        const hits = found.get(["url", "ipv4", "ipv6"].includes(type) ? v : v.toLowerCase()) || [];
+        for (const s of srcs) {
+          const mine = hits.filter(([id]) => id === s.id);
+          lookups.set(`${s.id}|${type}|${v}`, mine.length
+            ? { status: "listed", summary: mine.map(([, d]) => d).filter(Boolean).join("; "), link: s.home }
+            : { status: "not_listed", summary: "", link: "" });
+        }
+      }
+    } catch (e) {
+      for (const v of values) for (const s of srcs) lookups.set(`${s.id}|${type}|${v}`, { status: "error", summary: String(e.message || e), link: "" });
+    }
+  }
+}
+
 async function lookupAll() {
   $("lookupBtn").disabled = true;
+  await lookupServer();
   const lastCall = {};
   for (const ioc of iocs) {
     for (const s of sourcesFor(ioc.type, keys)) {
@@ -209,7 +247,7 @@ function rows() {
     type: i.type, value: i.value,
     asn: asnInfo.get(i.value) ? `AS${asnInfo.get(i.value).asn} ${asnInfo.get(i.value).name}` : "",
     feeds: db ? matchLocal(db, i).map((h) => h.feed).join(";") : "",
-    lookups: SOURCES.map((s) => lookups.get(`${s.id}|${i.type}|${i.value}`)).map((r, k) => r ? `${SOURCES[k].id}:${r.status}` : "").filter(Boolean).join(";"),
+    lookups: [...SERVER_SOURCES, ...SOURCES].map((s) => [s.id, lookups.get(`${s.id}|${i.type}|${i.value}`)]).filter(([, r]) => r).map(([id, r]) => `${id}:${r.status}`).join(";"),
   }));
 }
 const csvCell = (v) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
@@ -230,6 +268,12 @@ function renderSources() {
     const li = el("li", "", t("feedLine", f) + " · ");
     const a = el("a", "", f.attribution); a.href = f.home; a.rel = "noopener"; li.append(a);
     li.append(el("span", "meta", ` · ${t("updated")} ${new Date(f.fetched).toISOString().slice(0, 16).replace("T", " ")} UTC`));
+    ul.append(li);
+  }
+  for (const p of db.meta.private || []) {
+    const li = el("li", "", `${p.name}: ${t("serverLine", p.count.toLocaleString(lang === "tr" ? "tr-TR" : "en-US"))} · `);
+    const a = el("a", "", p.name); a.href = p.home; a.rel = "noopener"; li.append(a);
+    li.append(el("span", "meta", ` · ${t("updated")} ${new Date(p.fetched).toISOString().slice(0, 16).replace("T", " ")} UTC`));
     ul.append(li);
   }
   for (const s of SOURCES) {

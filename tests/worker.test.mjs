@@ -1,6 +1,6 @@
 // node tests/worker.test.mjs
 import assert from "node:assert/strict";
-import { handleProxy } from "../src/worker.js";
+import worker, { handleProxy, handleMatch, fnv1a } from "../src/worker.js";
 
 let n = 0;
 const calls = [];
@@ -53,6 +53,24 @@ await run("body size limit", async () => {
 await run("no logging in worker source", async () => {
   const { readFileSync } = await import("node:fs");
   assert.doesNotMatch(readFileSync(new URL("../src/worker.js", import.meta.url), "utf8"), /console\.(log|info|warn|error|debug)\(/);
+});
+
+await run("match returns only matching entries and never serves the private files", async () => {
+  assert.equal(fnv1a("a"), 0xe40c292c); // same reference value as the Python builder test
+  const shards = { [`ipv4/${fnv1a("45.9.1.1") % 16}`]: { "45.9.1.1": [["botvrij", "Lazarus"]], "1.1.1.9": [["cins", null]] } };
+  const assetCalls = [];
+  const env = { ASSETS: { fetch: async (r) => { const k = new URL(r.url).pathname.replace(/^\/_private\//, "").replace(/\.json$/, ""); assetCalls.push(k); return k in shards ? Response.json(shards[k]) : new Response("", { status: 404 }); } } };
+  const call = (body, headers = {}) => handleMatch(...req("/api/match", { method: "POST", body: JSON.stringify(body), headers }), env);
+  let r = await call({ type: "ipv4", values: ["45.9.1.1", "8.8.8.8"] });
+  assert.equal(r.status, 200);
+  assert.deepEqual((await r.json()).hits, [{ value: "45.9.1.1", hits: [["botvrij", "Lazarus"]] }]);
+  r = await call({ type: "domain", values: ["EVIL.example"] });
+  assert.deepEqual((await r.json()).hits, []);
+  assert.equal((await call({ type: "ipv4", values: ["1.1.1.1"] }, { origin: "https://evil.example", "sec-fetch-site": "cross-site" })).status, 403);
+  assert.equal((await call({ type: "regkey", values: ["x"] })).status, 400);
+  assert.equal((await call({ type: "ipv4", values: Array(1001).fill("1.1.1.1") })).status, 400);
+  const direct = await worker.fetch(new Request("https://ioclookup.com/_private/ipv4/0.json"), env);
+  assert.equal(direct.status, 404);
 });
 
 console.log(`ok: ${n} tests passed`);

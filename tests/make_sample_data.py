@@ -23,5 +23,5 @@ def fetcher(url):
     return base(url)
 
 
-B.build(Path("public/data"), fetcher)
+B.build(Path("public/data"), fetcher, private_out=Path("public/_private"))
 print("ok")

@@ -99,6 +99,32 @@ FEEDS = [
         "min": 1000,
     },
 ]
+# Sources whose terms allow use but say nothing about republishing. They are never published as
+# files: the build writes them under public/_private/, the Worker refuses public requests for that
+# path and answers only /api/match, which returns the matching entries (portfolio S-19, MK-21).
+PRIVATE_FEEDS = [
+    {
+        "id": "cins",
+        "name": "CINS Army",
+        "urls": ["http://cinsscore.com/list/ci-badguys.txt"],
+        "parser": "plain",
+        "home": "https://cinsscore.com/",
+        "terms": "\"parse and use in any way you see fit\"",
+        "min": 1000,
+    },
+    {
+        # Resale is not allowed: to be removed if the site ever charges (MK-20).
+        "id": "botvrij",
+        "name": "Botvrij.eu",
+        "urls": [f"https://www.botvrij.eu/data/ioclist.{t}" for t in ("ip-dst", "domain", "url", "md5", "sha1", "sha256", "email-src")],
+        "parser": "botvrij",
+        "home": "https://www.botvrij.eu/",
+        "terms": "free to use, no resale",
+        "min": 100,
+    },
+]
+PRIVATE_SHARDS = 16
+
 TLD_URL = "https://data.iana.org/TLD/tlds-alpha-by-domain.txt"
 ASN = {
     "url": "https://iptoasn.com/data/ip2asn-v4-u32.tsv.gz",
@@ -260,6 +286,92 @@ def parse_domain_lines(text: str) -> dict:
     return {"domain": {v: None for v in sorted(vals)}}
 
 
+HEX = set("0123456789abcdef")
+
+
+def classify(value: str) -> tuple[str, str] | None:
+    """Indicator type and normalised value, or None when the value is not a usable indicator."""
+    v = value.strip().strip(",;")
+    if not v:
+        return None
+    try:
+        ip = ipaddress.ip_address(v)
+        return ip_type(str(ip)), str(ip)
+    except ValueError:
+        pass
+    low = v.lower()
+    if low.startswith(("http://", "https://")):
+        return "url", v
+    if "@" in low and "." in low.split("@")[-1]:
+        return "email", low
+    if set(low) <= HEX and len(low) in (32, 40, 64):
+        return {32: "md5", 40: "sha1", 64: "sha256"}[len(low)], low
+    if "." in low and " " not in low and "/" not in low:
+        return "domain", low.rstrip(".")
+    return None
+
+
+def parse_listing(texts: list[str]) -> dict:
+    """Lines of `value` or `value # comment`; '#' lines and '---' separators are skipped."""
+    out: dict[str, dict] = {}
+    for text in texts:
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith(("#", "---")):
+                continue
+            value, _, comment = line.partition("#")
+            c = classify(value.split()[0] if value.split() else "")
+            if c:
+                out.setdefault(c[0], {})[c[1]] = comment.strip()[:120] or None
+    return out
+
+
+def fnv1a(s: str) -> int:
+    h = 0x811C9DC5
+    for b in s.encode("utf-8"):
+        h ^= b
+        h = (h * 0x01000193) & 0xFFFFFFFF
+    return h
+
+
+def write_private(feeds_data: dict, out: Path) -> None:
+    """public/_private/<type>/<shard>.json = {value: [[feed id, detail], ...]}, shard = fnv1a(value) % 16.
+    Small shards keep the Worker's per-request parsing well under its CPU limit."""
+    merged: dict[str, dict] = {}
+    for fid, data in feeds_data.items():
+        for t, values in data.items():
+            for v, d in values.items():
+                merged.setdefault(t, {}).setdefault(v, []).append([fid, d])
+    for t, values in merged.items():
+        shards: dict[int, dict] = {}
+        for v, hits in values.items():
+            shards.setdefault(fnv1a(v) % PRIVATE_SHARDS, {})[v] = hits
+        d = out / t
+        d.mkdir(parents=True, exist_ok=True)
+        for i in range(PRIVATE_SHARDS):
+            (d / f"{i}.json").write_text(json.dumps(shards.get(i, {}), separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
+
+
+def build_private(out: Path, meta: dict, fetcher) -> None:
+    feeds_data = {}
+    meta["private"] = []
+    for f in PRIVATE_FEEDS:
+        try:
+            data = parse_listing([r.decode("utf-8", "replace") for r in (fetcher(u) for u in f["urls"])])
+            count = sum(len(v) for v in data.values())
+            if count < f["min"]:
+                raise RuntimeError(f"only {count} records, minimum is {f['min']}")
+        except Exception as e:  # noqa: BLE001  the feed is left out until the next successful build
+            meta["errors"].append({"feed": f["id"], "error": str(e)[:300], "at": now()})
+            print(f"WARNING {f['id']}: {e}", file=sys.stderr)
+            continue
+        feeds_data[f["id"]] = data
+        meta["private"].append({"id": f["id"], "name": f["name"], "home": f["home"], "terms": f["terms"],
+                                "fetched": now(), "count": count, "types": sorted(data)})
+        print(f"{f['id']} (private): {count} {dict((k, len(v)) for k, v in data.items())}", file=sys.stderr)
+    write_private(feeds_data, out)
+
+
 def by_type(f: dict, raws: list[bytes]) -> dict:
     texts = [r.decode("utf-8", "replace") for r in raws]
     p = f["parser"]
@@ -293,7 +405,7 @@ def reuse_live(f: dict, out: Path, live_meta: dict | None, fetcher) -> dict | No
     return prev
 
 
-def build(out: Path, fetcher=fetch) -> dict:
+def build(out: Path, fetcher=fetch, private_out: Path | None = None) -> dict:
     """Each feed is written as one file per indicator type, <id>.<type>.json = {"v": {value: detail}},
     so the browser only downloads the types that occur in the pasted text.
     A failing source does not stop the build: its live copy is reused (see reuse_live) and the
@@ -345,6 +457,7 @@ def build(out: Path, fetcher=fetch) -> dict:
     # octets lists which shard files exist, so the browser never requests a missing one
     meta["asn"].update({"fetched": now(), "ranges": len(rows), "octets": octets})
     print(f"asn: {len(rows)} ranges in {len(octets)} files", file=sys.stderr)
+    build_private(private_out or out / "_private", meta, fetcher)
     (out / "meta.json").write_text(json.dumps(meta, indent=1) + "\n", encoding="utf-8")
     return meta
 
@@ -352,9 +465,10 @@ def build(out: Path, fetcher=fetch) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="public/data")
+    ap.add_argument("--private-out", default="public/_private", help="served only to the Worker, never publicly")
     args = ap.parse_args()
     try:
-        build(Path(args.out))
+        build(Path(args.out), private_out=Path(args.private_out))
     except Exception as e:  # noqa: BLE001
         print(f"ERROR: {e}", file=sys.stderr)
         return 1
