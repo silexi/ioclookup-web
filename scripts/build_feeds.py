@@ -427,7 +427,8 @@ def build_demo(out: Path, private_out: Path, meta: dict, fetcher) -> dict:
     cves = sorted(kev, key=lambda c: kev[c]["added"], reverse=True)[:2]
     c2ips = latest("c2intel", "ipv4", 2, public_ip)
     tf_url = one("tweetfeed", "url", pred=lambda u: u.startswith("http") and len(u) < 90)
-    tf_domain = one("tweetfeed", "domain")
+    url_host = (tf_url or "").split("/")[2].lower() if tf_url and tf_url.count("/") >= 2 else ""
+    tf_domain = one("tweetfeed", "domain", pred=lambda d: d != url_host)  # a second, different domain
     values = {
         "tor": one("tor-exit", "ipv4", pred=public_ip), "et": one("et-compromised", "ipv4", pred=public_ip),
         "c2ip": c2ips[0] if c2ips else None, "c2ip2": c2ips[1] if len(c2ips) > 1 else None,
