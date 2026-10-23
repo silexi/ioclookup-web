@@ -3,9 +3,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node tests/extract.test.mjs && node tests/enrich.test.mjs && node tests/worker.test.mjs && node tests/www.test.mjs && python3 -m unittest discover -s tests"
+    "test": "node tests/extract.test.mjs && node tests/enrich.test.mjs && node tests/worker.test.mjs && node tests/www.test.mjs && node tests/td1.test.mjs && python3 -m unittest discover -s tests",
+    "check:mobile": "node scripts/check-mobile.mjs"
   },
   "devDependencies": {
+    "playwright-core": "^1.56.1",
     "wrangler": "^4"
   }
 }
