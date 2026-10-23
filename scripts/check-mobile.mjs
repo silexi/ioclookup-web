@@ -21,7 +21,7 @@ const base = `http://127.0.0.1:${server.address().port}`;
 
 const walk = (d) => readdirSync(d).flatMap((n) => (statSync(join(d, n)).isDirectory() ? walk(join(d, n)) : [join(d, n)]));
 let pages = walk(root).filter((f) => f.endsWith(".html") && !f.endsWith("404.html")).map((f) => "/" + f.slice(root.length + 1).replace(/(index)?\.html$/, ""));
-const max = +(process.env.MAX_PAGES || 0); if (max && pages.length > max) pages = pages.filter((_, i) => i % Math.ceil(pages.length / max) === 0);
+const max = +(process.env.MAX_PAGES || 0); if (max && pages.length > max) pages = pages.filter((p, i) => p.split("/").filter(Boolean).length <= 1 || i % Math.ceil(pages.length / max) === 0);  // top-level pages always, the rest sampled
 
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined });
 const failures = [];
